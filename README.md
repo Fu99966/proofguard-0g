@@ -2,10 +2,11 @@
 
 > **A verifiable AI transaction firewall for autonomous onchain agents.**
 >
-> 璁╃浜屼釜鍙俊澶ц剳锛屾嫤鍦ㄤ氦鏄撲箣鍓嶃€?
+> 让第二个可信大脑，拦在交易之前。
+
 ProofGuard intercepts every transaction proposed by an AI agent, asks a **two-model 0G Private Computer committee** to review it, compiles both verdicts with deterministic owner policy, and issues a short-lived execution permit only when all three votes approve.
 
-**Hackathon track:** Build with 0G Private Computer 路 0G Labs
+**Hackathon track:** Build with 0G Private Computer · 0G Labs
 
 **0G committee:** `0GM-1.0-35B-A3B` (semantic judge) + `0GM-1.0-35B-A3B-SIA` (red-team critic)
 
@@ -145,13 +146,13 @@ Open [http://localhost:8787](http://localhost:8787).
 
 ## Demo flow
 
-1. Run **姝ｅ父鎹粨 / SAFE SWAP** and show both 0G models plus the deterministic gate issuing an `ALLOW` permit.
-2. Run **鎻愮ず璇嶆敞鍏?/ INJECTION** and show the hostile memo being treated as untrusted data and blocked.
-3. Click **妯℃嫙绡℃敼鍝嶅簲**; a one-byte change produces `COMMITMENT MISMATCH`.
-4. Open **璇佹嵁瀹?* to show transaction, policy, and inference commitments.
+1. Run **正常换仓 / SAFE SWAP** and show both 0G models plus the deterministic gate issuing an `ALLOW` permit.
+2. Run **提示词注入 / INJECTION** and show the hostile memo being treated as untrusted data and blocked.
+3. Click **模拟篡改响应**; a one-byte change produces `COMMITMENT MISMATCH`.
+4. Open **证据室** to show transaction, policy, and inference commitments.
 5. Optionally connect an EVM wallet and sign the permit; the server verifies the recovered address and consumes the nonce once.
 
-The complete 2鈥? minute narration and shot list are in [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
+The complete 2–3 minute narration and shot list are in [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 
 ## Attack scenarios
 
@@ -203,7 +204,7 @@ server/zeroGAdapter.js       0G Router integration and receipt capture
 server/policyEngine.js       Deterministic rules, hashing, permit compiler
 server/demoData.js           Owner policy and four judging scenarios
 docs/TECHNICAL.md            Architecture, threat model, Sponsor integration
-docs/DEMO_SCRIPT.md          2鈥? minute recording script
+docs/DEMO_SCRIPT.md          2–3 minute recording script
 docs/HACKATHON_SUBMISSION.md Copy-ready submission form and final checklist
 docs/plans/                  Validated product design
 ```
