@@ -103,8 +103,8 @@ The adapter captures each model's response ID, token usage, any proof/attestatio
 Requirements: Node.js 20+ and npm.
 
 ```bash
-git clone <your-github-repository-url>
-cd proofguard
+git clone https://github.com/Fu99966/proofguard-0g.git
+cd proofguard-0g
 npm install
 cp .env.example .env
 npm run dev
