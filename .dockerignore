@@ -1,0 +1,19 @@
+node_modules
+dist
+.env
+.env.*
+.git
+.github
+.kite-passport
+.playwright-cli
+output
+*.log
+
+# Other projects and local agent configuration are not part of ProofGuard.
+agent-tender-submission
+truth-arbitrage
+.agents
+.claude
+.cline
+.cursor
+
