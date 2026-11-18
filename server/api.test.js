@@ -98,14 +98,14 @@ describe("ProofGuard HTTP API", () => {
       if (url !== router) return fetchLocal(url, init);
       const body = JSON.parse(init.body);
       calls.push({ body, headers: init.headers });
-      const critic = body.model.endsWith("-SIA");
+      const critic = body.model.endsWith("-sia");
       if (critic && outcome === "timeout") throw new DOMException("test timeout", "TimeoutError");
       if (critic && outcome === "http error") return new Response(null, { status: 503 });
       const decision = critic && outcome === "invalid" ? "{}" : critic && outcome === "veto" ? allow.replace("ALLOW", "BLOCK") : allow;
       const verification = critic && outcome !== "verified" && outcome !== "veto" ? (outcome === "failed" ? false : undefined) : true;
       return Response.json({
         id: body.model,
-        model: body.model,
+        model: critic && outcome === "wrong model" ? "different-model" : body.model,
         choices: [{ finish_reason: "stop", message: { content: decision } }],
         x_0g_trace: { request_id: `request-${body.model}`, provider: signer.address, tee_verified: verification },
       }, { headers: { "x-0g-fixture": "metadata-only", "ZG-Res-Key": `chat-${body.model}` } });
@@ -115,24 +115,26 @@ describe("ProofGuard HTTP API", () => {
 
   it("requests verification from both configured private model routes and returns their provenance", async () => {
     const calls = stubRouter();
+    vi.stubEnv("ZERO_G_MODEL", "0GM-1.0-35B-A3B");
+    vi.stubEnv("ZERO_G_CRITIC_MODEL", "0GM-1.0-35B-A3B-SIA");
     const { status, data } = await request("review", { scenarioId: "safe-swap" });
     expect(status).toBe(200);
     expect(data.permit).toMatchObject({ decision: "ALLOW", owner: signer.address });
-    expect(calls.map(({ body }) => body.model).sort()).toEqual(["0GM-1.0-35B-A3B", "0GM-1.0-35B-A3B-SIA"]);
+    expect(calls.map(({ body }) => body.model).sort()).toEqual(["0gm-1.0-35b-a3b", "0gm-1.0-35b-a3b-sia"]);
     for (const { body, headers } of calls) {
       expect(body.verify_tee).toBe(true);
       expect(headers["X-0G-Provider-Trust-Mode"]).toBe("private");
     }
     expect(data.inference.receipt.responses).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: "primary", chatId: "chat-0GM-1.0-35B-A3B", requestId: "request-0GM-1.0-35B-A3B", verification: "router-verified" }),
-      expect.objectContaining({ role: "critic", chatId: "chat-0GM-1.0-35B-A3B-SIA", requestId: "request-0GM-1.0-35B-A3B-SIA", verification: "router-verified" }),
+      expect.objectContaining({ role: "primary", chatId: "chat-0gm-1.0-35b-a3b", requestId: "request-0gm-1.0-35b-a3b", verification: "router-verified" }),
+      expect.objectContaining({ role: "critic", chatId: "chat-0gm-1.0-35b-a3b-sia", requestId: "request-0gm-1.0-35b-a3b-sia", verification: "router-verified" }),
     ]));
     const blocked = await request("review", { scenarioId: "slippage-spike" });
     expect(blocked.data).toMatchObject({ decision: "BLOCK", permit: null });
     expect(blocked.data.inference.decision).toBe("ALLOW");
   });
 
-  it.each(["failed", "missing", "veto", "invalid", "timeout", "http error"])("never issues a permit for reviewer outcome %s", async (outcome) => {
+  it.each(["failed", "missing", "veto", "invalid", "timeout", "http error", "wrong model"])("never issues a permit for reviewer outcome %s", async (outcome) => {
     stubRouter(outcome);
     const { data } = await request("review", { scenarioId: "safe-swap" });
     expect(data).toMatchObject({ decision: "BLOCK", permit: null });
