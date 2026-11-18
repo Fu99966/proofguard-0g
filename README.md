@@ -1,5 +1,7 @@
 # ProofGuard
 
+**Current release target: Base Sepolia testnet. Do not use mainnet funds.**
+
 > **A verifiable AI transaction firewall for autonomous onchain agents.**
 >
 > 让第二个可信大脑，拦在交易之前。
@@ -48,7 +50,7 @@ Unanimous `ALLOW` produces a scoped, expiring, one-time permit. Any rejection, t
 - Seven deterministic policy checks with fail-closed behavior
 - Three independent commitments: transaction, owner policy, and inference response
 - Tamper challenge that modifies one byte and demonstrates commitment mismatch
-- Optional EVM wallet connection and `personal_sign` countersignature by the configured policy owner
+- Optional EVM wallet connection and EIP-712 typed-data signature by the configured policy owner
 - Execution adapter that verifies wallet signature, expiry, transaction hash, and one-time permit consumption
 - Explicitly labelled no-key Demo mode for reliable judging and development
 - Responsive industrial security-console interface
@@ -135,11 +137,11 @@ PORT=8787
 ```
 
 4. Restart `npm run dev`.
-5. The **LIVE 0G CONFIGURED** badge indicates configuration only. Run the two synthetic scenarios with `npm run smoke:0g` when you are ready to make four billable Router calls. The command fails unless the safe swap yields `ALLOW`, the injection scenario yields `BLOCK`, and both have two confirmed TEE results and trace identifiers. Compare request IDs with the 0G usage dashboard. The smoke prints Router verification separately from independent verification.
+5. The The `/api/health` mode indicates server configuration. The public browser scenarios always use local simulation. Run the two synthetic scenarios with `npm run smoke:0g` when you are ready to make four billable Router calls. The command fails unless the safe swap yields `ALLOW`, the injection scenario yields `BLOCK`, and both have two confirmed TEE results and trace identifiers. Compare request IDs with the 0G usage dashboard. The smoke prints Router verification separately from independent verification.
 
 ### Model selection and verification
 
-The default pair passed the live safe-swap and injection scenarios with four confirmed Router TEE verification results in Private/TeeML mode. This verifies enclave execution and Router confirmation for the tested routes. It does not establish end-to-end encrypted transit for the default primary.
+Before the calldata and mandate update, the default pair passed the live safe-swap and injection scenarios with four confirmed Router TEE verification results in Private/TeeML mode. This verifies enclave execution and Router confirmation for the tested routes. It does not establish end-to-end encrypted transit for the default primary.
 
 If an existing `.env` still names `0gm-1.0-35b-a3b` as the primary, set `ZERO_G_MODEL=glm-5.3-flash` or remove that override to use the new default. The older primary remains selectable. Its Encrypted Transit route omitted the Router's per-response `tee_verified` flag in the recorded tests. 0G describes how the encrypted gateway performs that check, and ProofGuard keeps permits blocked when the Router does not confirm both verdicts. [0G's explanation](https://0g.ai/blog/data-privacy-on-0g-private-computer#audit-it-then-verify-it)
 
@@ -158,16 +160,16 @@ Open [http://localhost:8787](http://localhost:8787).
 2. Run **提示词注入 / INJECTION** and show the hostile memo being treated as untrusted data and blocked.
 3. Click **模拟篡改响应**; a one-byte change produces `COMMITMENT MISMATCH`.
 4. Open **证据室** to show transaction, policy, and inference commitments.
-5. To try optional simulated execution, set `PROOFGUARD_OWNER_ADDRESS` to the **public address** of a disposable EVM wallet you control and restart the server. Review again, connect the configured wallet and `personal_sign` the permit hash. The server verifies that signer and consumes the permit once. Review and commitment checks work without a wallet.
+5. To try optional simulated execution, set `PROOFGUARD_OWNER_ADDRESS` to the **public address** of a disposable EVM wallet you control and restart the server. Review again, connect the configured wallet and sign the EIP-712 permit fields. The wallet shows the target, value, and deadline. The server verifies the signer and consumes the permit once. Review and commitment checks work without a wallet.
 
-The complete 2–3 minute narration and shot list are in [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
+The complete 2–3 minute narration and shot list are in [docs/hackathon/DEMO_SCRIPT.md](docs/hackathon/DEMO_SCRIPT.md).
 
 ## Attack scenarios
 
 | Scenario | What ProofGuard detects | Expected result |
 |---|---|---|
 | Safe swap | Approved target, assets, value, and 0.4% slippage | `ALLOW` |
-| Prompt injection | Instruction injection, unknown target, non-allowlisted token | `BLOCK` |
+| Prompt injection | Instruction injection and an unapproved payout address | `BLOCK` |
 | Unlimited approval | ERC-20 approval larger than owner policy | `BLOCK` |
 | Slippage spike | 9.8% slippage against a 0.75% maximum | `BLOCK` |
 
@@ -194,7 +196,11 @@ For independent verification, start with each reviewer's `provider`, `chatId`, m
 | `POST` | `/api/verify-commitment` | Detect response or transaction tampering |
 | `POST` | `/api/execute` | Verify the configured owner signature, permit expiry, exact proposal and one-time use |
 
-`/api/review` accepts a `scenarioId` or a `transaction` with a positive integer `chainId`, EVM `target`, non-empty `assetIn`, `assetOut`, `method` and `calldata` descriptions, finite nonnegative numeric `valueUsd`, and a nonnegative integer `slippageBps`. Supply numeric `approvalUsd` for `approve(...)`. Invalid proposals return 400 before inference. Policy or reviewer vetoes return `BLOCK` with `permit: null`. Router failures return 502 and invalid live configuration returns 503, both without a permit.
+Configure `PROOFGUARD_API_KEY_HASHES` with SHA-256 digests of random Agent keys, then send the original key as `Authorization: Bearer …`. Only the digest belongs on the server. Configure `PROOFGUARD_FRONTEND_ORIGINS` for separate frontend origins. Same-origin requests work with the built-in server.
+
+Submit an EVM transaction as `{ "transaction": { "chainId": 84532, "from": "0x…", "to": "0x…", "value": "0", "data": "0x…" } }`. `value` is a string in wei. The API decodes effects from calldata and independently checks the chain, sender, asset addresses, recipient, spend limit and minimum output. Optional legacy display claims must agree with decoded facts. Configure a trusted market source to approve custom proposals requiring valuation. The preset `/api/demo/review` accepts only a `scenarioId` and never sends requests to 0G.
+
+`GET /api/audit/:permitHash` requires the same Agent authorization and returns the stored decision and consumption record. `PROOFGUARD_DATABASE_PATH` selects the SQLite file. Mount this path on persistent single-instance storage if permits must survive process or container replacement.
 
 `/api/execute` takes `permitHash`, the unchanged `transaction` and the `signature`. The signer comes from the operator's policy configuration, not the HTTP request. Returned `txHash` is a local simulation receipt ID.
 
@@ -202,6 +208,8 @@ For independent verification, start with each reviewer's `provider`, `chatId`, m
 
 ```bash
 npm test
+npm run test:contracts
+npm run eval
 npm run build
 ```
 
@@ -212,13 +220,17 @@ The tests exercise the four demo scenarios, live Router response fixtures, no-ke
 ```text
 src/App.jsx                  Product UI and review state machine
 src/styles.css               Responsive industrial security-console design
-server/index.js              API, permit registry, and execution adapter
+server/index.js              HTTP routes for the review and simulator
+server/decoder.js            Address-aware EVM calldata decoder
+server/reviewStore.js        SQLite decision chain and permit lifecycle
+sdk/                         Review and guarded submission client
+contracts/src/               Base Sepolia Safe guard and agent module
 server/zeroGAdapter.js       0G Router integration and receipt capture
 server/policyEngine.js       Deterministic rules, hashing, permit compiler
 server/demoData.js           Owner policy and four judging scenarios
 docs/TECHNICAL.md            Architecture, threat model, Sponsor integration
-docs/DEMO_SCRIPT.md          2–3 minute recording script
-docs/HACKATHON_SUBMISSION.md Copy-ready submission form and final checklist
+docs/hackathon/DEMO_SCRIPT.md          2–3 minute recording script
+docs/hackathon/HACKATHON_SUBMISSION.md Copy-ready submission form and final checklist
 docs/plans/                  Validated product design
 ```
 
@@ -228,23 +240,25 @@ docs/plans/                  Validated product design
 - All model-controlled fields are untrusted input; malformed model output fails closed.
 - Policy checks are independent from model output.
 - Permits bind exact transaction hash, policy hash, inference hash, target, chain, expiry, and nonce.
-- The execution adapter consumes permits once in the current process and checks the configured signer. Without an owner address it does not consume permits.
-- The included executor is a simulation. Proposal values, asset labels, slippage and calldata descriptions are supplied inputs. The demo does not decode ABI, check prices, intercept wallet calls, broadcast transactions or move funds.
-- Production deployment should add authenticated sessions, persistent nonce storage, rate limits, an audited Safe module, RPC simulation, bytecode reputation, and onchain attestation verification when the official verifier interface is available.
+- The simulator consumes permits through a guarded SQLite update and verifies the configured owner's EIP-712 signature.
+- The four browser scenarios use fixed demo market data and simulated committee responses. The server decodes their calldata and labels the evidence as simulation.
+- Broadcast and onchain enforcement require a separately configured testnet environment, with an external audit required before mainnet use.
+
+## Base Sepolia agent and Safe Guard
+
+The [treasury agent runbook](examples/rebalancer/README.md) covers the JavaScript SDK, read-only portfolio observation, the guarded testnet submission path and the Safe fork integration check. See [completeness acceptance records](specs/002-project-completeness/tasks.md) for the distinction between local, fork and public testnet verification.
 
 ## Roadmap
 
-1. Safe smart-account module that requires a ProofGuard permit before execution
-2. Full transaction simulation with state diffs and token price impact
-3. Onchain permit registry and official 0G proof verifier integration
-4. Shared threat-intelligence feed for malicious contracts and poisoned tools
-5. Policy SDK for agent frameworks such as LangGraph, ElizaOS, and OpenAI Agents SDK
+1. Complete the public Base Sepolia deployment and 24-hour observation.
+2. Expand onchain receiver and balance checks and evaluate the live committee on an independent dataset.
+3. Commission a third-party contract audit before any mainnet launch.
 
 ## Documentation and Sponsor resources
 
 - [Technical submission](docs/TECHNICAL.md)
-- [Video script](docs/DEMO_SCRIPT.md)
-- [Copy-ready hackathon submission](docs/HACKATHON_SUBMISSION.md)
+- [Video script](docs/hackathon/DEMO_SCRIPT.md)
+- [Copy-ready hackathon submission](docs/hackathon/HACKATHON_SUBMISSION.md)
 - [0G Private Computer](https://pc.0g.ai/)
 - [0G model catalog](https://pc.0g.ai/models)
 - [0G documentation](https://docs.0g.ai/)

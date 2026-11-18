@@ -1,12 +1,19 @@
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { getBytes, Wallet } from "ethers";
+import { Wallet } from "ethers";
+import { permitTypedData } from "../sdk/permit.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "./index.js";
 
 const allow = JSON.stringify({ decision: "ALLOW", riskScore: 8, summary: "Within policy", threats: [], confidence: 0.95 });
 const router = "https://router-api.0g.ai/v1/chat/completions";
 const signer = Wallet.createRandom();
+const apiKey = "test-key-0123456789abcdef";
+const keyHashes = [createHash("sha256").update(apiKey).digest("hex")];
+async function sign(permit, transaction, wallet = signer) {
+  const { domain, types, message } = permitTypedData(permit, transaction);
+  return wallet.signTypedData(domain, types, message);
+}
 
 describe("ProofGuard HTTP API", () => {
   let server;
@@ -18,7 +25,9 @@ describe("ProofGuard HTTP API", () => {
       vi.stubEnv(`ZERO_G_${name}`, undefined);
     }
     clock = Date.now();
-    server = createApp({ owner: signer.address, now: () => clock }).listen(0, "127.0.0.1");
+    const app = createApp({ owner: signer.address, now: () => clock, keyHashes, database: ":memory:" });
+    server = app.listen(0, "127.0.0.1");
+    server.once("close", app.locals.closeReviewStore);
     await once(server, "listening");
     base = `http://127.0.0.1:${server.address().port}`;
   });
@@ -31,7 +40,7 @@ describe("ProofGuard HTTP API", () => {
 
   const request = async (path, body) => {
     const response = await fetch(`${base}/api/${path}`, body === undefined ? undefined : {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` }, body: JSON.stringify(body),
     });
     return { status: response.status, data: await response.json() };
   };
@@ -40,7 +49,7 @@ describe("ProofGuard HTTP API", () => {
     const { data } = await request("review", { scenarioId: "safe-swap" });
     const { transaction, permit } = data;
     expect(permit.owner).toBe(signer.address);
-    return { transaction, permitHash: permit.permitHash, signature: await signer.signMessage(getBytes(permit.permitHash)) };
+    return { transaction, permitHash: permit.permitHash, signature: await sign(permit, transaction), permit };
   }
 
   it("issues one demo permit across the four scenarios and matches independent commitment vectors", async () => {
@@ -75,12 +84,13 @@ describe("ProofGuard HTTP API", () => {
   it("requires the configured signer and exact proposal; only one simultaneous consumption succeeds", async () => {
     const input = await signedPermit();
     const changed = { ...input.transaction, memo: "Different proposal" };
-    const otherSignature = await Wallet.createRandom().signMessage(getBytes(input.permitHash));
+    const otherSignature = await sign(input.permit, input.transaction, Wallet.createRandom());
     expect((await request("execute", { ...input, signature: otherSignature })).status).toBe(422);
     expect((await request("execute", { ...input, transaction: changed })).status).toBe(422);
 
-    const consumed = await Promise.all([request("execute", input), request("execute", input)]);
-    expect(consumed.map(({ status }) => status).sort()).toEqual([200, 422]);
+    const consumed = await Promise.all(Array.from({ length: 20 }, () => request("execute", input)));
+    expect(consumed.filter(({ status }) => status === 200)).toHaveLength(1);
+    expect(consumed.filter(({ status }) => status === 422)).toHaveLength(19);
     expect(consumed.find(({ status }) => status === 200).data).toMatchObject({ status: "simulated", owner: signer.address });
   });
 
@@ -124,6 +134,12 @@ describe("ProofGuard HTTP API", () => {
     for (const { body, headers } of calls) {
       expect(body.verify_tee).toBe(true);
       expect(body.max_tokens).toBe(4096);
+      const prompt = body.messages[1].content;
+      expect(prompt).toContain("OWNER MANDATE");
+      expect(prompt).toContain("Maintain 35–45% ETH exposure");
+      expect(prompt).toContain('"maxIn":"2400000000"');
+      expect(prompt).not.toMatch(/pre-scan|blockers|\"passed\"/i);
+      expect(prompt.substring(prompt.lastIndexOf("UNTRUSTED MEMO:"))).toContain("Reduce idle stablecoin exposure");
       expect(headers["X-0G-Provider-Trust-Mode"]).toBe("private");
     }
     expect(data.inference.receipt.responses).toEqual(expect.arrayContaining([

@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { policy, scenarios } from "../server/demoData.js";
+import { demoMarket, policy, scenarios } from "../server/demoData.js";
 import { evaluatePolicy, issuePermit, stableHash } from "../server/policyEngine.js";
 import { getZeroGConfig, reviewWithZeroG } from "../server/zeroGAdapter.js";
 
@@ -12,7 +12,7 @@ if (config.mode !== "live") {
 for (const [id, expected] of [["safe-swap", "ALLOW"], ["prompt-injection", "BLOCK"]]) {
   const { transaction } = scenarios.find(({ id: scenarioId }) => scenarioId === id);
   try {
-    const deterministic = evaluatePolicy(transaction, policy);
+    const deterministic = evaluatePolicy(transaction, policy, { market: demoMarket });
     const inference = await reviewWithZeroG({ transaction, policy, deterministic });
     const decision = issuePermit({ transaction, policy, inference, deterministic }) ? "ALLOW" : "BLOCK";
     const responseContent = JSON.parse(inference.rawDecision);
