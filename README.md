@@ -86,7 +86,7 @@ const response = await fetch("https://router-api.0g.ai/v1/chat/completions", {
     "X-0G-Provider-Trust-Mode": "private",
   },
   body: JSON.stringify({
-    model, // 0GM-1.0-35B-A3B or 0GM-1.0-35B-A3B-SIA
+    model, // 0gm-1.0-35b-a3b or 0gm-1.0-35b-a3b-sia
     messages: [
       { role: "system", content: "You are an adversarial Web3 transaction firewall. Output JSON only." },
       { role: "user", content: reviewPrompt },
@@ -126,8 +126,8 @@ For a deterministic local presentation while keeping a configured key unused, se
 ```dotenv
 ZERO_G_API_KEY=your-router-api-key
 ZERO_G_BASE_URL=https://router-api.0g.ai/v1
-ZERO_G_MODEL=0GM-1.0-35B-A3B
-ZERO_G_CRITIC_MODEL=0GM-1.0-35B-A3B-SIA
+ZERO_G_MODEL=0gm-1.0-35b-a3b
+ZERO_G_CRITIC_MODEL=0gm-1.0-35b-a3b-sia
 ZERO_G_ENABLE_COMMITTEE=true
 ZERO_G_TRUST_MODE=private
 PORT=8787

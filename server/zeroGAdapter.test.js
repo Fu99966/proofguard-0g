@@ -26,8 +26,8 @@ describe("0G adapter", () => {
 
   it("configures the sponsor-native two-model committee by default", () => {
     const config = getZeroGConfig();
-    expect(config.models).toContain("0GM-1.0-35B-A3B");
-    expect(config.models).toContain("0GM-1.0-35B-A3B-SIA");
+    expect(config.models).toContain("0gm-1.0-35b-a3b");
+    expect(config.models).toContain("0gm-1.0-35b-a3b-sia");
   });
 
   it("fails closed when either committee reviewer blocks", () => {

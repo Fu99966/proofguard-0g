@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
 
 const ROUTER_URL = "https://router-api.0g.ai/v1";
-const DEFAULT_PRIMARY_MODEL = "0GM-1.0-35B-A3B";
-const DEFAULT_CRITIC_MODEL = "0GM-1.0-35B-A3B-SIA";
+const DEFAULT_PRIMARY_MODEL = "0gm-1.0-35b-a3b";
+const DEFAULT_CRITIC_MODEL = "0gm-1.0-35b-a3b-sia";
+const DEFAULT_MODELS = [DEFAULT_PRIMARY_MODEL, DEFAULT_CRITIC_MODEL];
 const TRUST_MODE = "private";
 
 export class ZeroGReviewError extends Error {
@@ -14,9 +15,10 @@ export class ZeroGReviewError extends Error {
 
 export function getZeroGConfig() {
   const demo = process.env.ZERO_G_FORCE_DEMO === "true" || !process.env.ZERO_G_API_KEY?.trim();
-  const models = demo
-    ? [DEFAULT_PRIMARY_MODEL, DEFAULT_CRITIC_MODEL]
+  const configured = demo
+    ? DEFAULT_MODELS
     : [process.env.ZERO_G_MODEL ?? DEFAULT_PRIMARY_MODEL, process.env.ZERO_G_CRITIC_MODEL ?? DEFAULT_CRITIC_MODEL];
+  const models = configured.map((id) => DEFAULT_MODELS.find((known) => known === id.toLowerCase()) ?? id);
   const usable = demo || (
     models.every((model) => model && model === model.trim()) &&
     models[0].toLowerCase() !== models[1].toLowerCase() &&
@@ -144,7 +146,9 @@ async function callReviewer({ transaction, policy, deterministic, model, role })
   try {
     body = await response.json();
     const choice = body.choices?.[0];
-    if (body.model !== model || choice?.finish_reason !== "stop") throw new Error("Unexpected model or incomplete response");
+    if (typeof body.model !== "string" || body.model.toLowerCase() !== model.toLowerCase() || choice?.finish_reason !== "stop") {
+      throw new Error("Unexpected model or incomplete response");
+    }
     content = choice.message?.content;
     parsed = validateDecision(extractJson(content));
   } catch {
