@@ -1,9 +1,10 @@
 import crypto from "node:crypto";
 
 const ROUTER_URL = "https://router-api.0g.ai/v1";
-const DEFAULT_PRIMARY_MODEL = "0gm-1.0-35b-a3b";
+const DEFAULT_PRIMARY_MODEL = "glm-5.3-flash";
 const DEFAULT_CRITIC_MODEL = "0gm-1.0-35b-a3b-sia";
 const DEFAULT_MODELS = [DEFAULT_PRIMARY_MODEL, DEFAULT_CRITIC_MODEL];
+const KNOWN_MODEL_IDS = [...DEFAULT_MODELS, "0gm-1.0-35b-a3b"];
 const TRUST_MODE = "private";
 // The completion budget includes hidden reasoning as well as the final JSON.
 const REVIEW_MAX_TOKENS = 4_096;
@@ -21,7 +22,7 @@ export function getZeroGConfig() {
   const configured = demo
     ? DEFAULT_MODELS
     : [process.env.ZERO_G_MODEL ?? DEFAULT_PRIMARY_MODEL, process.env.ZERO_G_CRITIC_MODEL ?? DEFAULT_CRITIC_MODEL];
-  const models = configured.map((id) => DEFAULT_MODELS.find((known) => known === id.toLowerCase()) ?? id);
+  const models = configured.map((id) => KNOWN_MODEL_IDS.find((known) => known === id.toLowerCase()) ?? id);
   const usable = demo || (
     models.every((model) => model && model === model.trim()) &&
     models[0].toLowerCase() !== models[1].toLowerCase() &&

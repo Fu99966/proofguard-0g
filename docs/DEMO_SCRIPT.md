@@ -27,7 +27,7 @@
 
 **旁白：**
 
-> 每笔交易在广播前都有三张安全票：0G 自研模型 0GM 负责语义主审，0GM-SIA 负责独立红队复核，Owner Policy 执行不可协商的硬边界。三票一致，才会签发 Execution Permit。
+> 每笔交易在广播前都有三张安全票：GLM-5.3-Flash 负责语义主审，0GM-SIA 负责独立红队复核，Owner Policy 执行不可协商的硬边界。三票一致，才会签发 Execution Permit。
 
 ### 00:30–01:05｜正常交易通过
 
@@ -35,7 +35,7 @@
 
 **旁白：**
 
-> 这是 Treasury Agent 提议的一笔正常换仓：在 Base 上将 2,400 USDC 换为 WETH。敏感意图通过官方 0G Router，并行发送给 0GM-1.0-35B-A3B 和 0GM-1.0-35B-A3B-SIA，强制使用 Private 模式。一个理解交易语义，一个专门寻找否决理由；同时，策略引擎检查网络、合约、金额、资产、滑点和授权。
+> 这是 Treasury Agent 提议的一笔正常换仓：在 Base 上将 2,400 USDC 换为 WETH。敏感意图通过官方 0G Router，并行发送给 glm-5.3-flash 和 0GM-1.0-35B-A3B-SIA，强制使用 Private 模式。一个理解交易语义，一个专门寻找否决理由；同时，策略引擎检查网络、合约、金额、资产、滑点和授权。
 
 **画面结果：** `EXECUTION PERMIT ISSUED`。
 
@@ -92,7 +92,7 @@
 ## 视频字幕关键词
 
 - 0G Private Computer
-- `0GM-1.0-35B-A3B`
+- `glm-5.3-flash`
 - `0GM-1.0-35B-A3B-SIA`
 - 2-model committee / unanimous vote
 - Private / TeeML

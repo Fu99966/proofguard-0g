@@ -22,7 +22,7 @@ X-0G-Provider-Trust-Mode: private
 
 配置模型：
 
-- `0GM-1.0-35B-A3B`：语义主审
+- `glm-5.3-flash`：语义主审
 - `0GM-1.0-35B-A3B-SIA`：红队复核
 
 Live 适配器会并行调用两个模型，保存 response ID、实际模型、token usage、延迟以及 API 实际返回的 proof / attestation / verification 元数据。当前提交使用 `ZERO_G_FORCE_DEMO=true`，因此演示回执明确标记为 simulation，不声称是 0G TEE proof。

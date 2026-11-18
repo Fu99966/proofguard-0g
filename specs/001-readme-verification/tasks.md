@@ -5,7 +5,9 @@
 - [x] T003 Bind and consume signed permits against the operator owner and original proposal (FR-004).
 - [x] T004 Align UI, README, technical notes and the live smoke command with supported behavior (FR-001–005).
 - [x] T005 Verify unit/HTTP cases, independent commitments, production build and browser flows (FR-001–005).
-- [ ] T006 Verify the actual two-model Router responses with a funded, authorized local key and synthetic inputs. Twelve authorized requests executed across the default and alternative committees. The alternative committee passed; an explicit verifiable response signal is still missing for the default primary. Default model and GitHub release decisions remain open.
+- [x] T006 Verify the actual two-model Router responses with a funded, authorized local key and synthetic inputs. Twelve authorized requests across three rounds. The final four requests verified the now-approved Flash and SIA defaults. Independent signer recovery passed for both providers; independent content binding passed for Flash, with SIA limited to Router verification.
+
+- [x] T007 Apply the approved default primary `glm-5.3-flash` (FR-002, FR-005). Preserve SIA, Private/TeeML, two explicit Router confirmations, and existing model overrides. Align setup and runbooks, then verify both scenarios by replaying the already-authorized live captures under the actual defaults. No additional paid calls.
 
 ## Verification recorded 2026-11-18
 
@@ -27,7 +29,7 @@ The second run also identified a SIA parser variation. The completed responses w
 
 The 0G activity dashboard was checked on 2026-11-18. All eight recorded calls appeared as Private for the expected models and providers. The dashboard totals of 7,112 input tokens and 9,943 output tokens matched the two local Router captures, including each model's four completion-token counts. This verifies usage correlation. The dashboard does not supply the missing per-response TEE verification result.
 
-A redacted inquiry about the primary model's missing verification field was confirmed in Sent on 2026-11-18 at 18:13 China Standard Time. Live permit acceptance remains open pending 0G guidance or another supported source of per-response evidence.
+A redacted inquiry about the primary model's missing verification field was confirmed in Sent on 2026-11-18 at 18:13 China Standard Time. A response from 0G could clarify the former primary's encrypted route; it is not needed for the verified Flash/SIA pair.
 
 ## Live alternative-primary acceptance
 
@@ -41,4 +43,12 @@ On 2026-11-18, one authorized four-request smoke run temporarily selected `glm-5
 | Official usage | Four new Private records match both models, providers, and the per-call usage values. Total for this run: 3,424 input and 4,745 completion tokens. |
 | Independent proof | All four EIP-191 signatures recovered their acknowledged registry signer. For both Flash responses, the signed response digest matched the reserialized response with only Router trace metadata removed. SIA signatures matched registered identity, but digest binding to the observed Router response could not be established. This does not change the four Router confirmation results. |
 
-Live acceptance is verified for the temporary committee under the Router verification policy. Default-committee acceptance is still partial. Selecting a different default would be a separate product decision because the primary model and transit privacy properties could change.
+Live acceptance is verified for this committee under the Router verification policy. The user subsequently approved Flash as the default primary. The earlier native-primary result remains partial and is recorded separately above.
+
+## Approved default
+
+Updated the runtime defaults, setup examples and technical and demo instructions to use Flash and SIA. Migrated the local old-primary setting without changing credentials. The former primary remains an explicit override and must still satisfy the same verification gates. The tested default pair is Private/TeeML; equivalent end-to-end encrypted transit for Flash was not established.
+
+With no model overrides, the smoke runner reproduced all four original authorized request bodies byte for byte. Replaying their exact response bodies produced ALLOW for safe swap and BLOCK for prompt injection, with four verified Router responses. The full suite passed 25 tests and the Vite production build. No additional inference requests were sent.
+
+GitHub handoff, if approved: push the local `codex/readme-verification` branch and create a draft pull request to `main`.

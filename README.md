@@ -8,7 +8,7 @@ ProofGuard reviews transaction proposals submitted by an AI agent before executi
 
 **Hackathon track:** Build with 0G Private Computer · 0G Labs
 
-**0G committee:** `0GM-1.0-35B-A3B` (semantic judge) + `0GM-1.0-35B-A3B-SIA` (red-team critic)
+**Default 0G committee:** `glm-5.3-flash` (semantic judge) + `0gm-1.0-35b-a3b-sia` (red-team critic)
 
 **Trust mode:** `private` / TeeML
 
@@ -34,7 +34,7 @@ Unanimous `ALLOW` produces a scoped, expiring, one-time permit. Any rejection, t
 | Track requirement | ProofGuard evidence |
 |---|---|
 | Official 0G Compute API | Server-side calls to `https://router-api.0g.ai/v1/chat/completions` |
-| At least one 0G model | Two sponsor-native 0G models are called for every live review |
+| At least one 0G model | Two distinct models are called through 0G Private Computer for every live review |
 | Verifiable inference | The Router checks both TEE signatures on request; per-reviewer IDs and evidence are preserved for follow-up verification |
 | Web3 + AI | Autonomous EVM transaction firewall, wallet countersignature, scoped one-time permit |
 | Runnable demo | React Web App + Express Agent API; tests and production build included |
@@ -59,7 +59,7 @@ Unanimous `ALLOW` produces a scoped, expiring, one-time permit. Any rejection, t
 flowchart LR
     A["Autonomous agent"] -->|proposed EVM transaction| I["ProofGuard interceptor"]
     I --> D["Deterministic pre-scan"]
-    I --> Z1["0GM semantic judge"]
+    I --> Z1["GLM-5.3-Flash semantic judge"]
     I --> Z2["0GM-SIA red-team critic"]
     D --> C["Decision compiler"]
     Z1 -->|private verdict + evidence| C
@@ -86,7 +86,7 @@ const response = await fetch("https://router-api.0g.ai/v1/chat/completions", {
     "X-0G-Provider-Trust-Mode": "private",
   },
   body: JSON.stringify({
-    model, // 0gm-1.0-35b-a3b or 0gm-1.0-35b-a3b-sia
+    model, // glm-5.3-flash or 0gm-1.0-35b-a3b-sia
     messages: [
       { role: "system", content: "You are an adversarial Web3 transaction firewall. Output JSON only." },
       { role: "user", content: reviewPrompt },
@@ -127,7 +127,7 @@ For a deterministic local presentation while keeping a configured key unused, se
 ```dotenv
 ZERO_G_API_KEY=your-router-api-key
 ZERO_G_BASE_URL=https://router-api.0g.ai/v1
-ZERO_G_MODEL=0gm-1.0-35b-a3b
+ZERO_G_MODEL=glm-5.3-flash
 ZERO_G_CRITIC_MODEL=0gm-1.0-35b-a3b-sia
 ZERO_G_ENABLE_COMMITTEE=true
 ZERO_G_TRUST_MODE=private
@@ -137,17 +137,11 @@ PORT=8787
 4. Restart `npm run dev`.
 5. The **LIVE 0G CONFIGURED** badge indicates configuration only. Run the two synthetic scenarios with `npm run smoke:0g` when you are ready to make four billable Router calls. The command fails unless the safe swap yields `ALLOW`, the injection scenario yields `BLOCK`, and both have two confirmed TEE results and trace identifiers. Compare request IDs with the 0G usage dashboard. The smoke prints Router verification separately from independent verification.
 
-### Optional live compatibility check
+### Model selection and verification
 
-The default primary uses 0G Encrypted Transit. In the recorded test, that route omitted the Router’s per-response `tee_verified` flag, so ProofGuard withheld permits. 0G documents that the encrypted gateway performs the signature check on that path. [0G’s explanation](https://0g.ai/blog/data-privacy-on-0g-private-computer#audit-it-then-verify-it)
+The default pair passed the live safe-swap and injection scenarios with four confirmed Router TEE verification results in Private/TeeML mode. This verifies enclave execution and Router confirmation for the tested routes. It does not establish end-to-end encrypted transit for the default primary.
 
-The following POSIX shell command temporarily selects a different primary for one smoke run. It makes four billable requests against the two built-in synthetic scenarios.
-
-```sh
-ZERO_G_MODEL=glm-5.3-flash ZERO_G_CRITIC_MODEL=0gm-1.0-35b-a3b-sia npm run smoke:0g
-```
-
-This pair passed the live safe-swap and injection scenarios using Private/TeeML and four confirmed Router verification results. The test confirms Private/TeeML routing and Router verification; it does not establish that the alternative primary uses the same Encrypted Transit path as the default.
+If an existing `.env` still names `0gm-1.0-35b-a3b` as the primary, set `ZERO_G_MODEL=glm-5.3-flash` or remove that override to use the new default. The older primary remains selectable. Its Encrypted Transit route omitted the Router's per-response `tee_verified` flag in the recorded tests. 0G describes how the encrypted gateway performs that check, and ProofGuard keeps permits blocked when the Router does not confirm both verdicts. [0G's explanation](https://0g.ai/blog/data-privacy-on-0g-private-computer#audit-it-then-verify-it)
 
 ## Production build
 

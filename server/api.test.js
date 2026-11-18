@@ -113,7 +113,7 @@ describe("ProofGuard HTTP API", () => {
     return calls;
   }
 
-  it("requests verification from both configured private model routes and returns their provenance", async () => {
+  it("normalizes configured model IDs and returns both private verification receipts", async () => {
     const calls = stubRouter();
     vi.stubEnv("ZERO_G_MODEL", "0GM-1.0-35B-A3B");
     vi.stubEnv("ZERO_G_CRITIC_MODEL", "0GM-1.0-35B-A3B-SIA");
