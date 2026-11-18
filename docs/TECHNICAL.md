@@ -164,7 +164,7 @@ sequenceDiagram
 
 ## 7. 错误处理
 
-- 0G 请求 45 秒超时，超时或非 2xx 直接失败关闭。
+- 0G 单次请求超时为 90 秒。输出预算为 4,096 token，覆盖推理和最终 JSON；截断、超时或非 2xx 均不签发许可。
 - 模型必须返回可解析 JSON；自然语言或缺字段响应不得变成 `ALLOW`。
 - `decision` 除精确 `ALLOW` 外一律归一化为 `BLOCK`。
 - risk score 与 confidence 必须是范围内的有限数值。
