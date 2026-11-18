@@ -38,9 +38,17 @@ export function getZeroGConfig() {
   };
 }
 
-export function extractJson(text) {
+export function extractJson(text, { allowBareThinkEnd = false } = {}) {
   if (typeof text !== "string") throw new Error("Missing 0G reviewer content");
-  const cleaned = text.trim().replace(/^(?:<think>[\s\S]*?<\/think>\s*)+/i, "");
+  let cleaned = text.trim().replace(/^(?:<think>[\s\S]*?<\/think>\s*)+/i, "");
+  if (allowBareThinkEnd && !cleaned.startsWith("{") && !cleaned.startsWith("```")) {
+    // SIA may omit the opening tag when returning its reasoning in content.
+    const markers = [...cleaned.matchAll(/<\/?think>/gi)];
+    if (markers.length === 1 && markers[0][0].toLowerCase() === "</think>") {
+      const end = markers[0].index + markers[0][0].length;
+      cleaned = cleaned.slice(end).trimStart();
+    }
+  }
   const fenced = cleaned.match(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/i);
   return JSON.parse(fenced ? fenced[1] : cleaned);
 }
@@ -156,7 +164,7 @@ async function callReviewer({ transaction, policy, deterministic, model, role })
       throw new Error("Unexpected model or incomplete response");
     }
     content = choice.message?.content;
-    parsed = validateDecision(extractJson(content));
+    parsed = validateDecision(extractJson(content, { allowBareThinkEnd: model === DEFAULT_CRITIC_MODEL }));
   } catch (error) {
     if (error instanceof ZeroGReviewError) throw error;
     throw new ZeroGReviewError(`0G ${role} returned an invalid or incomplete decision.`);

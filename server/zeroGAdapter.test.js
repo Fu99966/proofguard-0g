@@ -20,6 +20,18 @@ describe("0G adapter", () => {
     expect(result).toEqual({ decision: "ALLOW", riskScore: 8 });
   });
 
+  it("accepts only the final JSON after the SIA reasoning delimiter", () => {
+    const answer = '{"decision":"BLOCK","riskScore":90}';
+    const sia = { allowBareThinkEnd: true };
+    const intermediate = '{"decision":"ALLOW","riskScore":1}';
+    expect(extractJson(`Thinking about ${intermediate}. </think>\n${answer}`, sia)).toEqual({
+      decision: "BLOCK", riskScore: 90,
+    });
+    expect(() => extractJson(`Unmarked lead-in. ${answer}`, sia)).toThrow();
+    expect(() => extractJson(`Reasoning. </think> ${answer} ${answer}`, sia)).toThrow();
+    expect(() => extractJson(`Reasoning. </think> ${answer}`)).toThrow();
+  });
+
   it("fails closed when a model response has no JSON", () => {
     expect(() => extractJson("Looks safe to me")).toThrow();
   });

@@ -5,7 +5,7 @@
 - [x] T003 Bind and consume signed permits against the operator owner and original proposal (FR-004).
 - [x] T004 Align UI, README, technical notes and the live smoke command with supported behavior (FR-001–005).
 - [x] T005 Verify unit/HTTP cases, independent commitments, production build and browser flows (FR-001–005).
-- [ ] T006 Verify the actual two-model Router responses with a funded, authorized local key and synthetic inputs. The first four authorized requests ran and failed acceptance. Recheck with a new authorization for four requests. Independently verify provider signature evidence as documented when exposed.
+- [ ] T006 Verify the actual two-model Router responses with a funded, authorized local key and synthetic inputs. Eight authorized requests executed in two rounds. Current open condition: an explicit verifiable response signal from the primary model is missing. Independently verify provider signature evidence as documented when exposed.
 
 ## Verification recorded 2026-11-18
 
@@ -21,4 +21,6 @@ Public Router preflight confirmed that `GET /v1/models` lists the lowercase IDs 
 
 The controlled Router fixture and public catalog verify client behavior and availability only. Live acceptance remains T006.
 
-The truncation fix increases the budget to 4,096 and passes the 24-test suite and production build. A new paid live run requires separate authorization. See [live verdict truncation assessment](../../.specify/bugs/live-verdict-truncation/assessment.md).
+The truncation fix increases the budget to 4,096 and passes the 24-test suite and production build. The separately authorized retest verified that all four responses completed under the increased limit. See [live verdict truncation assessment](../../.specify/bugs/live-verdict-truncation/assessment.md).
+
+The second run also identified a SIA parser variation. The completed responses were replayed through HTTP after the compatibility fix. Expected model votes were recovered in both scenarios. The injection decision was BLOCK. A safe permit is still unavailable because the native primary omits the explicit per-response TEE verification flag. Independent signer recovery matched on all four responses, but exact response binding could not be established with the material returned on this route. Status: partial. See [SIA verdict delimiter verification](../../.specify/bugs/sia-verdict-delimiter/test.md).
