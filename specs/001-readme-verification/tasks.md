@@ -5,7 +5,7 @@
 - [x] T003 Bind and consume signed permits against the operator owner and original proposal (FR-004).
 - [x] T004 Align UI, README, technical notes and the live smoke command with supported behavior (FR-001–005).
 - [x] T005 Verify unit/HTTP cases, independent commitments, production build and browser flows (FR-001–005).
-- [ ] T006 Verify the actual two-model Router responses with a funded, authorized local key and synthetic inputs. Eight authorized requests executed in two rounds. Current open condition: an explicit verifiable response signal from the primary model is missing. Independently verify provider signature evidence as documented when exposed.
+- [ ] T006 Verify the actual two-model Router responses with a funded, authorized local key and synthetic inputs. Twelve authorized requests executed across the default and alternative committees. The alternative committee passed; an explicit verifiable response signal is still missing for the default primary. Default model and GitHub release decisions remain open.
 
 ## Verification recorded 2026-11-18
 
@@ -28,3 +28,17 @@ The second run also identified a SIA parser variation. The completed responses w
 The 0G activity dashboard was checked on 2026-11-18. All eight recorded calls appeared as Private for the expected models and providers. The dashboard totals of 7,112 input tokens and 9,943 output tokens matched the two local Router captures, including each model's four completion-token counts. This verifies usage correlation. The dashboard does not supply the missing per-response TEE verification result.
 
 A redacted inquiry about the primary model's missing verification field was confirmed in Sent on 2026-11-18 at 18:13 China Standard Time. Live permit acceptance remains open pending 0G guidance or another supported source of per-response evidence.
+
+## Live alternative-primary acceptance
+
+On 2026-11-18, one authorized four-request smoke run temporarily selected `glm-5.3-flash` as primary and kept `0gm-1.0-35b-a3b-sia` as critic. No saved model settings changed.
+
+| Check | Result |
+| --- | --- |
+| Router | Four HTTP 200, complete verdicts and distinct request IDs. Every response had `tee_verified: true`. Both providers were registered, acknowledged TeeML services. |
+| Smoke | Safe swap: both ALLOW and a simulated permit issued. Prompt injection: both BLOCK and no permit. Process exit 0. |
+| HTTP replay | Exact captured Router responses produced the same permit outcomes. An ephemeral configured wallet consumed the safe permit once through the simulator; the next consume returned 422. |
+| Official usage | Four new Private records match both models, providers, and the per-call usage values. Total for this run: 3,424 input and 4,745 completion tokens. |
+| Independent proof | All four EIP-191 signatures recovered their acknowledged registry signer. For both Flash responses, the signed response digest matched the reserialized response with only Router trace metadata removed. SIA signatures matched registered identity, but digest binding to the observed Router response could not be established. This does not change the four Router confirmation results. |
+
+Live acceptance is verified for the temporary committee under the Router verification policy. Default-committee acceptance is still partial. Selecting a different default would be a separate product decision because the primary model and transit privacy properties could change.

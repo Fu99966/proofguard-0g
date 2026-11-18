@@ -137,6 +137,18 @@ PORT=8787
 4. Restart `npm run dev`.
 5. The **LIVE 0G CONFIGURED** badge indicates configuration only. Run the two synthetic scenarios with `npm run smoke:0g` when you are ready to make four billable Router calls. The command fails unless the safe swap yields `ALLOW`, the injection scenario yields `BLOCK`, and both have two confirmed TEE results and trace identifiers. Compare request IDs with the 0G usage dashboard. The smoke prints Router verification separately from independent verification.
 
+### Optional live compatibility check
+
+The default primary uses 0G Encrypted Transit. In the recorded test, that route omitted the Router’s per-response `tee_verified` flag, so ProofGuard withheld permits. 0G documents that the encrypted gateway performs the signature check on that path. [0G’s explanation](https://0g.ai/blog/data-privacy-on-0g-private-computer#audit-it-then-verify-it)
+
+The following POSIX shell command temporarily selects a different primary for one smoke run. It makes four billable requests against the two built-in synthetic scenarios.
+
+```sh
+ZERO_G_MODEL=glm-5.3-flash ZERO_G_CRITIC_MODEL=0gm-1.0-35b-a3b-sia npm run smoke:0g
+```
+
+This pair passed the live safe-swap and injection scenarios using Private/TeeML and four confirmed Router verification results. The test confirms Private/TeeML routing and Router verification; it does not establish that the alternative primary uses the same Encrypted Transit path as the default.
+
 ## Production build
 
 ```bash
