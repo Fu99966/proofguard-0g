@@ -102,11 +102,11 @@ describe("ProofGuard HTTP API", () => {
       if (critic && outcome === "timeout") throw new DOMException("test timeout", "TimeoutError");
       if (critic && outcome === "http error") return new Response(null, { status: 503 });
       const decision = critic && outcome === "invalid" ? "{}" : critic && outcome === "veto" ? allow.replace("ALLOW", "BLOCK") : allow;
-      const verification = critic && outcome !== "verified" && outcome !== "veto" ? (outcome === "failed" ? false : undefined) : true;
+      const verification = critic && !["verified", "veto", "truncated"].includes(outcome) ? (outcome === "failed" ? false : undefined) : true;
       return Response.json({
         id: body.model,
         model: critic && outcome === "wrong model" ? "different-model" : body.model,
-        choices: [{ finish_reason: "stop", message: { content: decision } }],
+        choices: [{ finish_reason: critic && outcome === "truncated" ? "length" : "stop", message: { content: decision } }],
         x_0g_trace: { request_id: `request-${body.model}`, provider: signer.address, tee_verified: verification },
       }, { headers: { "x-0g-fixture": "metadata-only", "ZG-Res-Key": `chat-${body.model}` } });
     });
@@ -123,6 +123,7 @@ describe("ProofGuard HTTP API", () => {
     expect(calls.map(({ body }) => body.model).sort()).toEqual(["0gm-1.0-35b-a3b", "0gm-1.0-35b-a3b-sia"]);
     for (const { body, headers } of calls) {
       expect(body.verify_tee).toBe(true);
+      expect(body.max_tokens).toBe(4096);
       expect(headers["X-0G-Provider-Trust-Mode"]).toBe("private");
     }
     expect(data.inference.receipt.responses).toEqual(expect.arrayContaining([
@@ -138,6 +139,13 @@ describe("ProofGuard HTTP API", () => {
     stubRouter(outcome);
     const { data } = await request("review", { scenarioId: "safe-swap" });
     expect(data).toMatchObject({ decision: "BLOCK", permit: null });
+  });
+
+  it("rejects even a valid-looking ALLOW when the reviewer finished at the output limit", async () => {
+    stubRouter("truncated");
+    const { status, data } = await request("review", { scenarioId: "safe-swap" });
+    expect(status).toBe(502);
+    expect(data).toMatchObject({ decision: "BLOCK", permit: null, error: expect.stringContaining("output limit") });
   });
 
   it("validates input before calling the Router and rejects a disabled live committee", async () => {
