@@ -36,10 +36,11 @@ describe("0G adapter", () => {
     expect(() => extractJson("Looks safe to me")).toThrow();
   });
 
-  it("configures the sponsor-native two-model committee by default", () => {
-    const config = getZeroGConfig();
-    expect(config.models).toContain("0gm-1.0-35b-a3b");
-    expect(config.models).toContain("0gm-1.0-35b-a3b-sia");
+  it("configures the verified pair by default in both demo and live modes", () => {
+    const expected = ["glm-5.3-flash", "0gm-1.0-35b-a3b-sia"];
+    expect(getZeroGConfig()).toMatchObject({ mode: "demo", models: expected });
+    vi.stubEnv("ZERO_G_API_KEY", "synthetic-key");
+    expect(getZeroGConfig()).toMatchObject({ mode: "live", models: expected, trustMode: "private" });
   });
 
   it("fails closed when either committee reviewer blocks", () => {

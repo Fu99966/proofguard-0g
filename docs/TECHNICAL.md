@@ -6,7 +6,7 @@
 - 参赛赛道：赛道二 — Build with 0G Private Computer
 - Sponsor：0G Labs
 - 产品形态：Web App + Agent transaction firewall API
-- 0G 模型委员会：`0GM-1.0-35B-A3B` 主审 + `0GM-1.0-35B-A3B-SIA` 红队复核
+- 0G 模型委员会：`glm-5.3-flash` 主审 + `0GM-1.0-35B-A3B-SIA` 红队复核
 - 推理模式：`private` / TeeML
 
 ## 2. 项目定义
@@ -27,7 +27,7 @@ Authorization: Bearer $ZERO_G_API_KEY
 X-0G-Provider-Trust-Mode: private
 ```
 
-主审模型固定为 `0GM-1.0-35B-A3B`，红队模型固定为 `0GM-1.0-35B-A3B-SIA`。两次请求并行发出，请求携带 `verify_tee: true`，适配器校验模型、结束原因与裁决字段。任一请求失败、未完成、格式异常或 Router 未确认 TEE 签名，均不会发放许可。API key 不进入浏览器。
+默认主审为 `glm-5.3-flash`，默认红队复核为 `0GM-1.0-35B-A3B-SIA`。两次请求并行发出，请求携带 `verify_tee: true`，适配器校验模型、结束原因与裁决字段。任一请求失败、未完成、格式异常或 Router 未确认 TEE 签名，均不会发放许可。API key 不进入浏览器。
 
 ### 3.2 为什么必须使用 Private Computer
 
@@ -103,8 +103,8 @@ sequenceDiagram
   "transactionHash": "0x...",
   "policyHash": "0x...",
   "inferenceHash": "0x...",
-  "model": "0GM-1.0-35B-A3B",
-  "models": ["0GM-1.0-35B-A3B", "0GM-1.0-35B-A3B-SIA"],
+  "model": "glm-5.3-flash",
+  "models": ["glm-5.3-flash", "0GM-1.0-35B-A3B-SIA"],
   "trustMode": "private",
   "issuedAt": "ISO-8601",
   "expiresAt": "ISO-8601",

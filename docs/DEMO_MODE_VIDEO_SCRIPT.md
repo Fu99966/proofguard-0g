@@ -16,7 +16,7 @@
 
 旁白：
 
-> 产品接入了 0G Private Computer 的官方 Router，并为 0GM-1.0-35B-A3B 与 0GM-SIA 设计了语义主审和红队复核角色，再由确定性 Owner Policy 执行硬边界。三票一致才生成 Permit。当前录像使用无网络费用的确定性 Demo 模式，因此页面明确标记为模拟运行。
+> 产品接入了 0G Private Computer 的官方 Router，并为 glm-5.3-flash 与 0GM-SIA 设计了语义主审和红队复核角色，再由确定性 Owner Policy 执行硬边界。三票一致才生成 Permit。当前录像使用无网络费用的确定性 Demo 模式，因此页面明确标记为模拟运行。
 
 ## 00:38–01:05｜正常交易
 

@@ -12,12 +12,12 @@
 
 ## 项目简介
 
-ProofGuard 是链上 Agent 的交易防火墙。Agent 可以在广播前向系统提交 EVM 交易提案。系统把意图、目标合约、资产路径、授权、滑点和不可信 memo 交给 0G Private Computer。`0GM-1.0-35B-A3B` 负责语义主审，`0GM-1.0-35B-A3B-SIA` 负责独立红队复核；Owner Policy 同时执行确定性硬规则。三票一致才签发绑定交易哈希、策略哈希、委员会响应哈希、有效期和 nonce 的一次性 Permit。
+ProofGuard 是链上 Agent 的交易防火墙。Agent 可以在广播前向系统提交 EVM 交易提案。系统把意图、目标合约、资产路径、授权、滑点和不可信 memo 交给 0G Private Computer。`glm-5.3-flash` 负责语义主审，`0GM-1.0-35B-A3B-SIA` 负责独立红队复核；Owner Policy 同时执行确定性硬规则。三票一致才签发绑定交易哈希、策略哈希、委员会响应哈希、有效期和 nonce 的一次性 Permit。
 
 ## Sponsor 技术接入
 
 - 官方端点：`POST https://router-api.0g.ai/v1/chat/completions`
-- 主审模型：`0GM-1.0-35B-A3B`
+- 主审模型：`glm-5.3-flash`
 - 红队模型：`0GM-1.0-35B-A3B-SIA`
 - 请求模式：`X-0G-Provider-Trust-Mode: private`
 - 证据：保存两个真实 response ID、实际模型名、token usage、延迟，以及 Router request ID、provider、chat ID、TEE 验证结果和可用的证明元数据
@@ -25,7 +25,7 @@ ProofGuard 是链上 Agent 的交易防火墙。Agent 可以在广播前向系�
 
 ## 核心亮点
 
-1. Sponsor-native：核心决策链直接依赖两个 0G 自研模型，而不是把 0G 当装饰性 API。
+1. Sponsor-native：核心决策链直接依赖0G Private Computer 上的两个独立模型，而不是把 0G 当装饰性 API。
 2. 可验证推理有业务价值：验证结果决定提案能否获得模拟执行 Permit。
 3. Web3 原生：面向 DAO 金库、DeFi 策略和自主钱包 Agent 的交易执行安全。
 4. 多模型协作：语义主审与安全红队角色分离，单票否决并 fail closed。
