@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { randomUUID } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -13,7 +14,7 @@ const env = process.env;
 const live = process.argv.includes("--send");
 const once = !process.argv.includes("--observe-24h");
 const interval = 5 * 60_000;
-const end = Date.now() + 24 * 60 * 60_000;
+const runId = randomUUID();
 const safe = getAddress(env.PROOFGUARD_AGENT_WALLET).toLowerCase();
 const journal = env.PROOFGUARD_AGENT_LOG || "var/agent.jsonl";
 const rpc = env.PROOFGUARD_RPC_URL;
@@ -43,11 +44,12 @@ const guardAddress = live ? getAddress(env.PROOFGUARD_TESTNET_GUARD_ADDRESS) : n
 const guard = live ? await guardedSafeSigner(guardAddress, signer, safe) : null;
 const client = live ? createProofGuardClient({ apiUrl: env.PROOFGUARD_API_URL, apiKey: env.PROOFGUARD_AGENT_API_KEY }) : null;
 const issuer = live ? await guard.issuer() : null;
+const agent = signer?.address ?? null;
 let submissionsPaused = false;
 await mkdir(path.dirname(journal), { recursive: true, mode: 0o700 });
 
 async function record(entry) {
-  const line = JSON.stringify({ at: new Date().toISOString(), mode: live ? "testnet" : "observe", ...entry },
+  const line = JSON.stringify({ at: new Date().toISOString(), mode: live ? "testnet" : "observe", runId, ...entry },
     (_name, value) => typeof value === "bigint" ? value.toString() : value);
   await appendFile(journal, `${line}\n`, { mode: 0o600 });
   console.log(line);
@@ -145,6 +147,22 @@ async function tick() {
   await submit(proposal(baseSepolia.router, data, "Rebalance toward 40% ETH exposure under the operator mandate."), { ...trade, minOut });
 }
 
+async function recordBoundary(event, earliestTimestamp = 0) {
+  let block = await provider.getBlock("latest");
+  const cutoff = Date.now() + 30_000;
+  while (block && block.timestamp < earliestTimestamp && Date.now() < cutoff) {
+    await sleep(2_000);
+    block = await provider.getBlock("latest");
+  }
+  if (!block || block.timestamp < earliestTimestamp) throw new Error("Base Sepolia observation boundary is unavailable.");
+  await record({ event, chainId: baseSepolia.chainId, agent, safe, guard: guardAddress,
+    blockTag: block.number, blockHash: block.hash, nonce: agent ? await provider.getTransactionCount(agent, block.number) : null });
+  return block.timestamp;
+}
+
+const durationSeconds = 24 * 60 * 60;
+const startedAtBlockTime = once ? null : await recordBoundary("run-started");
+const end = Date.now() + durationSeconds * 1_000;
 while (true) {
   try {
     await tick();
@@ -156,3 +174,5 @@ while (true) {
   if (once || Date.now() >= end) break;
   await sleep(Math.min(interval, end - Date.now()));
 }
+
+if (!once) await recordBoundary("run-finished", startedAtBlockTime + durationSeconds);
