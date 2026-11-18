@@ -24,7 +24,7 @@ describe("ProofGuard policy engine", () => {
     expect(evaluatePolicy(tx("slippage-spike"), policy).blockers).toContain("slippage");
   });
 
-  it("issues an enforceable permit only when both gates allow", () => {
+  it("issues a permit only when the committee and policy allow", () => {
     const transaction = tx("safe-swap");
     const deterministic = evaluatePolicy(transaction, policy);
     const allow = issuePermit({
@@ -39,8 +39,9 @@ describe("ProofGuard policy engine", () => {
       deterministic,
       inference: { decision: "BLOCK", model: "0GM-1.0-35B-A3B", trustMode: "private", rawDecision: "block" },
     });
-    expect(allow.enforceable).toBe(true);
-    expect(block.enforceable).toBe(false);
+    expect(allow.decision).toBe("ALLOW");
+    expect(allow.enforceable).toBe(false);
+    expect(block).toBeNull();
     expect(allow.permitHash).toMatch(/^0x[0-9a-f]{64}$/);
   });
 

@@ -1,5 +1,20 @@
 import crypto from "node:crypto";
 
+const nonnegative = (value) => Number.isFinite(value) && value >= 0;
+const text = (value) => typeof value === "string" && value.trim().length > 0;
+
+export function isTransactionProposal(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && Number.isSafeInteger(value.chainId) && value.chainId > 0
+    && typeof value.target === "string" && /^0x[0-9a-f]{40}$/i.test(value.target)
+    && text(value.assetIn) && text(value.assetOut) && text(value.method)
+    && text(value.calldata) && nonnegative(value.valueUsd)
+    && Number.isSafeInteger(value.slippageBps) && value.slippageBps >= 0
+    && (value.approvalUsd === undefined || nonnegative(value.approvalUsd))
+    && (!/^approve\s*\(/i.test(value.method.trim()) || nonnegative(value.approvalUsd))
+    && (value.memo === undefined || typeof value.memo === "string");
+}
+
 const INJECTION_PATTERNS = [
   /ignore (all |every )?(previous|prior) (rule|instruction)/i,
   /system override/i,
@@ -28,7 +43,7 @@ export function evaluatePolicy(transaction, policy) {
   const checks = [];
   const add = (id, label, passed, severity, detail) => checks.push({ id, label, passed, severity, detail });
 
-  add("chain", "允许的网络", policy.allowedChains.includes(Number(transaction.chainId)), "critical", `Chain ID ${transaction.chainId}`);
+  add("chain", "允许的网络", policy.allowedChains.includes(transaction.chainId), "critical", `Chain ID ${transaction.chainId}`);
 
   const targetAllowed = policy.allowedTargets.map(normalizeAddress).includes(normalizeAddress(transaction.target));
   add("target", "合约白名单", targetAllowed, "critical", targetAllowed ? "目标合约已批准" : "未知目标合约");
@@ -36,26 +51,25 @@ export function evaluatePolicy(transaction, policy) {
   add(
     "value",
     "单笔价值上限",
-    Number(transaction.valueUsd || 0) <= policy.maxValueUsd,
+    nonnegative(transaction.valueUsd) && transaction.valueUsd <= policy.maxValueUsd,
     "critical",
-    `$${Number(transaction.valueUsd || 0).toLocaleString()} / $${policy.maxValueUsd.toLocaleString()}`,
+    `$${transaction.valueUsd.toLocaleString()} / $${policy.maxValueUsd.toLocaleString()}`,
   );
 
   add(
     "slippage",
     "最大滑点",
-    Number(transaction.slippageBps || 0) <= policy.maxSlippageBps,
+    nonnegative(transaction.slippageBps) && transaction.slippageBps <= policy.maxSlippageBps,
     "high",
-    `${Number(transaction.slippageBps || 0) / 100}% / ${policy.maxSlippageBps / 100}%`,
+    `${transaction.slippageBps / 100}% / ${policy.maxSlippageBps / 100}%`,
   );
 
   const assetsAllowed = [transaction.assetIn, transaction.assetOut]
-    .filter(Boolean)
     .every((asset) => policy.allowedAssets.includes(asset));
   add("assets", "资产白名单", assetsAllowed, "critical", `${transaction.assetIn} → ${transaction.assetOut}`);
 
-  const approval = Number(transaction.approvalUsd || 0);
-  const approvalSafe = !approval || approval <= policy.maxApprovalUsd;
+  const approval = transaction.approvalUsd ?? 0;
+  const approvalSafe = nonnegative(approval) && approval <= policy.maxApprovalUsd;
   add(
     "approval",
     "授权额度",
@@ -82,13 +96,14 @@ export function evaluatePolicy(transaction, policy) {
   };
 }
 
-export function issuePermit({ transaction, policy, inference, deterministic }) {
-  const issuedAt = new Date();
-  const expiresAt = new Date(issuedAt.getTime() + policy.expiresInSeconds * 1000);
-  const decision = deterministic.passed && inference.decision === "ALLOW" ? "ALLOW" : "BLOCK";
+export function issuePermit({ transaction, policy, inference, deterministic, now = Date.now() }) {
+  if (!deterministic.passed || inference.decision !== "ALLOW") return null;
+  const issuedAt = new Date(now);
+  const expiresAt = new Date(now + policy.expiresInSeconds * 1000);
   const payload = {
-    version: "proofguard-permit/1",
-    decision,
+    version: "proofguard-permit/2",
+    decision: "ALLOW",
+    owner: policy.owner ?? null,
     transactionHash: stableHash(transaction),
     policyHash: stableHash(policy),
     inferenceHash: stableHash(inference.rawDecision),
@@ -97,13 +112,13 @@ export function issuePermit({ transaction, policy, inference, deterministic }) {
     trustMode: inference.trustMode,
     issuedAt: issuedAt.toISOString(),
     expiresAt: expiresAt.toISOString(),
-    nonce: crypto.randomBytes(6).toString("hex"),
+    nonce: crypto.randomBytes(12).toString("hex"),
   };
 
   return {
     ...payload,
     permitHash: stableHash(payload),
-    enforceable: decision === "ALLOW",
+    enforceable: Boolean(payload.owner),
     scope: {
       target: transaction.target,
       valueUsd: transaction.valueUsd,

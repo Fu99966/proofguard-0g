@@ -36,7 +36,7 @@ cp .env.example .env
 npm run dev
 ```
 
-打开 `http://localhost:5173`，页面右上角显示 `DEMO / 0G READY`。
+打开 `http://localhost:5173`，页面右上角显示 `DEMO / NO 0G CALLS`。
 
 预置场景：
 
