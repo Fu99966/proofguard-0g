@@ -31,7 +31,7 @@ The SDK asks for live review before every approval and swap. It verifies the iss
 npm run agent:verify -- <run-id>
 ```
 
-The verifier checks the journal for observation gaps and compares its start and end to canonical Base Sepolia blocks at least 24 hours apart. It accounts for the entire Agent nonce range and matches each successful Safe Guard transaction to its `PermitConsumed` event, approved calldata and two Router-verified audit decisions. At least one confirmed swap is required. Record the rejected-recipient test separately.
+The verifier checks the journal for observation gaps and compares its start and end to canonical Base Sepolia blocks at least 24 hours apart. It accounts for the entire Agent nonce range and matches each successful Safe Guard transaction to its `PermitConsumed` event, approved calldata and two Router-verified audit decisions. The 24-hour run uses the same capped review API for one zero-amount recipient rejection after the first confirmed swap. The verifier requires both the swap and the rejection with two Router receipts.
 
 ## Safe fork verification
 

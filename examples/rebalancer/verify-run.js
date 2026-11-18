@@ -1,6 +1,7 @@
 import { Interface, keccak256 } from "ethers";
 import { guardAbi } from "../../sdk/guard.js";
 import { baseSepolia } from "../../sdk/network.js";
+import { hasVerifiedReviewers, isRecipientRejection } from "./rejection.js";
 
 const guard = new Interface(guardAbi);
 const daySeconds = 24 * 60 * 60;
@@ -29,9 +30,7 @@ function verifyDecision(audit, submitted, tx, permit, start) {
     && sameHex(permit.nonce, `0x${audit.permit.nonce}`) && permit.deadline === BigInt(Math.floor(Date.parse(audit.permit.expiresAt) / 1000)),
   "The audited transaction differs from the transaction executed through the guard.");
   const reviews = audit.reviews;
-  requireEvidence(reviews?.length === 2 && reviews.some(({ role }) => role === "primary") && reviews.some(({ role }) => role === "critic")
-    && new Set(reviews.map(({ model }) => model)).size === 2 && new Set(reviews.map(({ requestId }) => requestId)).size === 2
-    && reviews.every(({ decision, requestId, verification }) => decision === "ALLOW" && requestId && verification === "router-verified"),
+  requireEvidence(hasVerifiedReviewers(reviews) && reviews.every(({ decision }) => decision === "ALLOW"),
   "The audit is missing the two distinct Router-verified approvals.");
   return facts.effects.some(({ kind }) => kind === "swap");
 }
@@ -80,6 +79,10 @@ export async function verifyAgentRun(entries, { provider, readAudit }) {
     if (verifyDecision(audit, entry, call.args, permit, start)) swaps++;
   }
   requireEvidence(swaps > 0, "The run contains no successful guarded rebalance.");
+  const rejections = entries.filter(({ event }) => event === "recipient-rejected");
+  requireEvidence(rejections.length === 1 && isRecipientRejection(rejections[0], start.safe)
+    && Date.parse(rejections[0].at) >= ticks[0] && Date.parse(rejections[0].at) <= ticks.at(-1),
+  "The run does not prove a verified recipient rejection within the observation window.");
   return { runId: start.runId, startBlock: opening.block.number, endBlock: closing.block.number,
-    elapsedOnChainSeconds: closing.block.timestamp - opening.block.timestamp, observations: positions.length, guardedTransactions: submitted.length, swaps };
+    elapsedOnChainSeconds: closing.block.timestamp - opening.block.timestamp, observations: positions.length, guardedTransactions: submitted.length, swaps, recipientRejections: rejections.length };
 }

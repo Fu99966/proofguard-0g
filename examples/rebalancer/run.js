@@ -9,6 +9,7 @@ import { createProofGuardClient } from "../../sdk/index.js";
 import { guardedSafeSigner } from "../../sdk/guard.js";
 import { baseSepolia } from "../../sdk/network.js";
 import { rebalance } from "./strategy.js";
+import { checkRecipientRejection } from "./rejection.js";
 
 const env = process.env;
 const live = process.argv.includes("--send");
@@ -46,6 +47,7 @@ const client = live ? createProofGuardClient({ apiUrl: env.PROOFGUARD_API_URL, a
 const issuer = live ? await guard.issuer() : null;
 const agent = signer?.address ?? null;
 let submissionsPaused = false;
+let rejectionRecorded = false;
 await mkdir(path.dirname(journal), { recursive: true, mode: 0o700 });
 
 async function record(entry) {
@@ -145,6 +147,10 @@ async function tick() {
   const swap = abi.encode(["address", "uint256", "uint256", "bytes", "bool"], [safe, trade.amount, minOut, pathBytes, true]);
   const data = router.encodeFunctionData("execute", ["0x00", [swap], Math.floor(Date.now() / 1000) + 240]);
   await submit(proposal(baseSepolia.router, data, "Rebalance toward 40% ETH exposure under the operator mandate."), { ...trade, minOut });
+  if (!once && !rejectionRecorded) {
+    await record(await checkRecipientRejection(client, safe));
+    rejectionRecorded = true;
+  }
 }
 
 async function recordBoundary(event, earliestTimestamp = 0) {
