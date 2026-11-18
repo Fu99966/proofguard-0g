@@ -1,4 +1,4 @@
-FROM node:20-alpine AS build
+FROM node:22-bookworm-slim AS build
 
 WORKDIR /app
 
@@ -7,9 +7,10 @@ RUN npm ci
 
 COPY index.html vite.config.js ./
 COPY src ./src
+COPY sdk ./sdk
 RUN npm run build
 
-FROM node:20-alpine AS runtime
+FROM node:22-bookworm-slim AS runtime
 
 ENV NODE_ENV=production
 WORKDIR /app
@@ -18,6 +19,8 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY server ./server
+COPY sdk ./sdk
+RUN install -d -o node -g node -m 700 /app/var
 COPY --from=build /app/dist ./dist
 
 USER node

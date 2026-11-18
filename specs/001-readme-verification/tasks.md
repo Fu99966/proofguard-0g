@@ -21,11 +21,11 @@
 
 Public Router preflight confirmed that `GET /v1/models` lists the lowercase IDs `0gm-1.0-35b-a3b` and `0gm-1.0-35b-a3b-sia`, and `GET /v1/providers?model=…` listed one TeeML provider for each at the time of the check. The adapter now uses those IDs and accepts prior uppercase settings. HTTP regression checks verify canonical requests from prior settings and reject responses from a different model. The updated suite passed all 23 tests and the Vite production build.
 
-The controlled Router fixture and public catalog verify client behavior and availability only. Live acceptance remains T006.
+At this stage, the controlled Router fixture and public catalog had verified client behavior and availability. The final T006 result appears under Live alternative-primary acceptance.
 
 The truncation fix increases the budget to 4,096 and passes the 24-test suite and production build. The separately authorized retest verified that all four responses completed under the increased limit. See [live verdict truncation assessment](../../.specify/bugs/live-verdict-truncation/assessment.md).
 
-The second run also identified a SIA parser variation. The completed responses were replayed through HTTP after the compatibility fix. Expected model votes were recovered in both scenarios. The injection decision was BLOCK. A safe permit is still unavailable because the native primary omits the explicit per-response TEE verification flag. Independent signer recovery matched on all four responses, but exact response binding could not be established with the material returned on this route. Status: partial. See [SIA verdict delimiter verification](../../.specify/bugs/sia-verdict-delimiter/test.md).
+The second run also identified a SIA parser variation. The completed responses were replayed through HTTP after the compatibility fix. Expected model votes were recovered in both scenarios. The injection decision was BLOCK. The safe-swap replay issued no permit because the native primary omitted the explicit per-response TEE verification flag. Independent signer recovery matched on all four responses, but exact response binding could not be established with the material returned on this route. Status: partial. See [SIA verdict delimiter verification](../../.specify/bugs/sia-verdict-delimiter/test.md).
 
 The 0G activity dashboard was checked on 2026-11-18. All eight recorded calls appeared as Private for the expected models and providers. The dashboard totals of 7,112 input tokens and 9,943 output tokens matched the two local Router captures, including each model's four completion-token counts. This verifies usage correlation. The dashboard does not supply the missing per-response TEE verification result.
 
@@ -51,4 +51,6 @@ Updated the runtime defaults, setup examples and technical and demo instructions
 
 With no model overrides, the smoke runner reproduced all four original authorized request bodies byte for byte. Replaying their exact response bodies produced ALLOW for safe swap and BLOCK for prompt injection, with four verified Router responses. The full suite passed 25 tests and the Vite production build. No additional inference requests were sent.
 
-GitHub handoff, if approved: push the local `codex/readme-verification` branch and create a draft pull request to `main`.
+## Draft pull request check
+
+On 2026-11-18, [draft PR #2](https://github.com/Fu99966/proofguard-0g/pull/2) was open from `readme-verification` to `main`. GitHub reported no merge conflicts and showed no status checks. The PR code matched the local checkout. All 25 tests and the Vite production build passed on Node 22.23.5.

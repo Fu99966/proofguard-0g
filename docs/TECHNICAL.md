@@ -81,7 +81,7 @@ sequenceDiagram
 - 四个预置攻击场景
 - Intercept → Private Inference → Policy → Seal 状态机
 - 防火墙、证据室、架构三个页面
-- EIP-191 `personal_sign` 钱包签名
+- EIP-712 钱包签名
 - 篡改响应挑战与 fail-closed 可视化
 
 ### 4.2 后端
@@ -112,7 +112,7 @@ sequenceDiagram
   "permitHash": "0x...",
   "scope": {
     "target": "0x...",
-    "valueUsd": 2400,
+    "value": "0",
     "method": "execute(bytes,bytes[],uint256)",
     "chainId": 8453
   }
@@ -147,7 +147,7 @@ sequenceDiagram
 
 ### 5.4 钱包与一次性 Permit
 
-只有配置 `PROOFGUARD_OWNER_ADDRESS` 后才可消费许可。执行适配器从 EIP-191 签名恢复地址，与 Permit 绑定的策略钱包比对，并检查 Permit、有效期、原始提案和 nonce。成功后在当前进程内立即消费 Permit。
+只有配置 `PROOFGUARD_OWNER_ADDRESS` 后才可消费许可。执行适配器从 EIP-712 签名恢复地址，与 Permit 绑定的策略钱包比对，并检查 Permit、有效期、原始提案和 nonce。成功后由 SQLite 原子更新消费记录。
 
 ## 6. 威胁模型
 
@@ -196,8 +196,8 @@ npm start
 
 - 无 0G API key 时使用确定性 Demo reviewer，页面明确标记为模拟，不宣称 TEE proof。
 - 执行适配器会真实验证钱包签名和 Permit，但不会广播交易或移动资金。
-- nonce registry 当前为内存存储，服务重启后清空。
-- 美元价值、滑点、资产标签和 calldata 描述由提案提供。当前没有 ABI 解码、可信行情、RPC 仿真或链上执行。
+- 浏览器预设使用固定市场样本。经过鉴权的 Base Sepolia 提案使用服务端配置的价格源，根据 calldata 和地址计算效果。
+- Base Sepolia Agent 使用独立签发者签名、Safe Guard 与 RPC 余额模拟。测试网部署和长时间验收的状态以项目完整性规格记录为准。
 
 这些边界保证演示可重复，同时不对未实现能力作虚假陈述。
 

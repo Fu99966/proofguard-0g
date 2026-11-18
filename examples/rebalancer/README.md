@@ -1,0 +1,43 @@
+# Base Sepolia treasury agent
+
+The agent reads a Safe's ETH, WETH and USDC balances at the same block as the independent price snapshot. It targets 40% ETH exposure with a 35–45% no-trade band and limits each order to $10 of testnet notional and 15% of the current portfolio. WETH and USDC are the trading inventory. The native ETH balance contributes to exposure.
+
+## Local verification
+
+```bash
+npm ci
+npm test
+npm run test:contracts
+npm run eval
+```
+
+Use `npm run agent:rebalance` for a single read-only tick with the Base Sepolia RPC, ETH/USD feed proxy and Safe address configured. The code verifies the network and discards pool quotes outside the independent price tolerance. Test USDC uses a $1 reference when no USDC/USD feed is configured. Market and simulation RPC URLs are operator-controlled.
+
+## Real testnet run
+
+Use a dedicated Base Sepolia Safe 1.5.0 with owner keys held separately. Register the deployed ProofGuard contract as the Safe's module, module guard and transaction guard in that order while the account is empty. Configure the Safe as `PROOFGUARD_AGENT_WALLET`. Fund its test inventory with ETH or WETH and USDC (WETH is required for sell orders), and fund the separate agent EOA with testnet ETH for gas. The agent address must have only the module's restricted role. Keep the issuer key on the review server. The `.env.example` file lists the server settings.
+
+For a disposable operator-managed run, `node scripts/deploy-testnet-safe.js` checks the local testnet account balance without broadcasting. The `--send` mode deploys and configures a new Safe/Guard for the known test-only roles from `var/testnet-acceptance/wallets.json`. Build the Foundry contract first.
+
+For the agent process, set `PROOFGUARD_RPC_URL`, `PROOFGUARD_ETH_USD_FEED`, `PROOFGUARD_AGENT_WALLET`, `PROOFGUARD_TESTNET_GUARD_ADDRESS`, `PROOFGUARD_TESTNET_AGENT_KEY`, `PROOFGUARD_API_URL` and `PROOFGUARD_AGENT_API_KEY`. Set `PROOFGUARD_SIMULATION_RPC_URL` if the main RPC lacks `eth_simulateV1`. `PROOFGUARD_AGENT_LOG` overrides the default local journal path `var/agent.jsonl`.
+
+```bash
+npm run agent:rebalance -- --send --observe-24h
+```
+
+The SDK asks for live review before every approval and swap. It verifies the issuer, replays the specific Safe call through `eth_simulateV1`, checks simulated token movements and verifies the confirmation's `PermitConsumed` event. Match each submitted transaction hash to its confirmed permit and retrieve the corresponding review via `/api/audit/:permitHash`. Set the server's persistent Router budget for a bounded test run.
+
+## Safe fork verification
+
+Start Anvil on a loopback Base Sepolia fork and run the integration script. It verifies the deployed Safe singleton and factory code hashes, creates a test-local Safe, attaches both guards, and tests a valid typed permit plus missing and replayed permits. The funded state is local to Anvil.
+
+```bash
+node node_modules/@foundry-rs/anvil/bin.mjs --fork-url https://base-sepolia-rpc.publicnode.com --chain-id 84532 --host 127.0.0.1 --port 18545 --silent
+```
+
+```bash
+npm run test:contracts
+node scripts/verify-safe.js
+```
+
+[Safe v1.5.0 deployment registry](https://github.com/safe-global/safe-deployments/tree/main/src/assets/v1.5.0) · [Base Sepolia Uniswap deployments](https://developers.uniswap.org/docs/protocols/v3/deployments/v3-base-deployments)

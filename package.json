@@ -9,24 +9,31 @@
     "start": "node server/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke:0g": "node scripts/live-zero-g-smoke.js"
+    "smoke:0g": "node scripts/live-zero-g-smoke.js",
+    "eval": "node eval/run.js",
+    "test:contracts": "node node_modules/@foundry-rs/forge/bin.mjs test",
+    "agent:rebalance": "node examples/rebalancer/run.js"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.6",
     "@fontsource/ibm-plex-sans": "^5.2.6",
+    "better-sqlite3": "^13.2.0",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "ethers": "^6.17.0",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.7.4",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
+    "@foundry-rs/anvil": "1.7.1",
+    "@foundry-rs/forge": "1.7.1",
     "@vitejs/plugin-react": "^4.6.0",
     "concurrently": "^9.2.1",
+    "solc": "0.8.38",
     "vite": "^7.1.7",
-    "vitest": "^3.2.4"
+    "vitest": "5.1.1"
   }
 }
-

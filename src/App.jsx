@@ -1,3 +1,6 @@
+import { TypedDataEncoder } from "ethers";
+import { baseSepolia } from "../sdk/network.js";
+import { permitTypedData } from "../sdk/permit.js";
 import {
   Activity,
   AlertTriangle,
@@ -44,6 +47,7 @@ const money = (value) => `$${Number(value || 0).toLocaleString("en-US", { maximu
 function App() {
   const [data, setData] = useState(null);
   const [selectedId, setSelectedId] = useState("safe-swap");
+  const [reviewMode, setReviewMode] = useState("demo");
   const [phase, setPhase] = useState("idle");
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
@@ -79,6 +83,7 @@ function App() {
   function selectScenario(id) {
     if (phase !== "idle" && phase !== "complete" && phase !== "error") return;
     setSelectedId(id);
+    setReviewMode("demo");
     setResult(null);
     setSignature("");
     setExecution(null);
@@ -91,7 +96,9 @@ function App() {
     ]);
   }
 
-  async function runReview() {
+  async function runReview(proposal) {
+    const custom = Boolean(proposal?.transaction);
+    setReviewMode(custom ? data.status.agentReviewMode : "demo");
     setResult(null);
     setSignature("");
     setExecution(null);
@@ -104,12 +111,13 @@ function App() {
       await sleep(520);
       appendLog("Untrusted proposal fields isolated for review");
       setPhase("inference");
-      appendLog(data.status.mode === "demo" ? "Running two simulated reviews locally" : "Requesting private review from the 0G Router");
+      appendLog(custom ? "Submitting decoded-calldata review" : "Running two simulated reviews locally");
 
-      const response = await fetch("/api/review", {
+      const response = await fetch(custom ? "/api/review" : "/api/demo/review", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scenarioId: selectedId }),
+        headers: { "Content-Type": "application/json", ...(custom ? { Authorization: `Bearer ${proposal.apiKey}` } : {}) },
+        body: JSON.stringify(custom ? { transaction: proposal.transaction } : { scenarioId: selectedId }),
+        signal: AbortSignal.timeout(100_000),
       });
 
       const payload = await response.json();
@@ -151,9 +159,10 @@ function App() {
       if (account.toLowerCase() !== result.permit.owner.toLowerCase()) {
         throw new Error("当前钱包不是策略指定的签名钱包。");
       }
+      const { domain, types, message } = permitTypedData(result.permit, result.transaction);
       const signed = await window.ethereum.request({
-        method: "personal_sign",
-        params: [result.permit.permitHash, account],
+        method: "eth_signTypedData_v4",
+        params: [account, JSON.stringify(TypedDataEncoder.getPayload(domain, types, message))],
       });
       setWallet(account);
       const response = await fetch("/api/execute", {
@@ -235,6 +244,7 @@ function App() {
             selectedId={selectedId}
             selectScenario={selectScenario}
             phase={phase}
+            reviewMode={result?.inference.mode || reviewMode}
             result={result}
             error={error}
             logs={logs}
@@ -254,7 +264,31 @@ function App() {
   );
 }
 
-function FirewallView({ data, scenario, selectedId, selectScenario, phase, result, error, logs, runReview, isRunning, signPermit, signature, execution, testTamper, tamper }) {
+function CustomReview({ onReview, isRunning }) {
+  function submit(event) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const value = (field) => form.get(field).trim();
+    const transaction = { chainId: baseSepolia.chainId, from: value("from"), to: value("to"),
+      value: value("value"), data: value("calldata") };
+    void onReview({ transaction, apiKey: value("apiKey") });
+  }
+
+  return <details className="custom-review">
+    <summary>审查自定义交易</summary>
+    <form onSubmit={submit} autoComplete="off">
+      <p>Base Sepolia。服务端会核对登记钱包、calldata 和独立价格。</p>
+      <label>Agent 钱包<input name="from" pattern="0x[0-9a-fA-F]{40}" title="40 位十六进制 EVM 地址" required /></label>
+      <label>目标地址<input name="to" pattern="0x[0-9a-fA-F]{40}" title="40 位十六进制 EVM 地址" required /></label>
+      <label>原生币金额（wei）<input name="value" pattern="0|[1-9][0-9]{0,77}" inputMode="numeric" defaultValue="0" required /></label>
+      <label>Calldata<textarea name="calldata" rows="4" spellCheck={false} autoCapitalize="off" placeholder="0x…" required maxLength={50_000} /></label>
+      <label>Agent API 密钥<input name="apiKey" type="password" autoComplete="off" required minLength={16} /></label>
+      <button type="submit" className="primary-action" disabled={isRunning}>{isRunning ? "正在审查" : "提交交易审查"}</button>
+    </form>
+  </details>;
+}
+
+function FirewallView({ data, scenario, selectedId, selectScenario, phase, reviewMode, result, error, logs, runReview, isRunning, signPermit, signature, execution, testTamper, tamper }) {
   return (
     <div className="firewall-page">
       <section className="hero">
@@ -288,29 +322,30 @@ function FirewallView({ data, scenario, selectedId, selectScenario, phase, resul
             <span className="pending-pill">AWAITING REVIEW</span>
           </div>
           <div className="intent-summary">
-            <div><span>动作</span><strong>{scenario.transaction.method.startsWith("approve") ? "TOKEN APPROVAL" : "SWAP"}</strong></div>
+            <div><span>动作</span><strong>{scenario.display.method.startsWith("approve") ? "TOKEN APPROVAL" : "SWAP"}</strong></div>
             <ArrowRight size={18} />
-            <div><span>资产路径</span><strong>{scenario.transaction.assetIn} → {scenario.transaction.assetOut}</strong></div>
-            <div className="value"><span>价值</span><strong>{money(scenario.transaction.valueUsd)}</strong></div>
+            <div><span>资产路径</span><strong>{scenario.display.assetIn} → {scenario.display.assetOut}</strong></div>
+            <div className="value"><span>价值</span><strong>{money(scenario.display.valueUsd)}</strong></div>
           </div>
           <div className="transaction-fields">
             <Field label="CHAIN" value={`Base / ${scenario.transaction.chainId}`} />
-            <Field label="TARGET" value={shortHash(scenario.transaction.target, 10, 7)} mono />
-            <Field label="METHOD" value={scenario.transaction.method} mono />
-            <Field label="SLIPPAGE" value={`${scenario.transaction.slippageBps / 100}%`} danger={scenario.transaction.slippageBps > data.policy.maxSlippageBps} />
+            <Field label="TARGET" value={shortHash(scenario.transaction.to, 10, 7)} mono />
+            <Field label="METHOD" value={scenario.display.method} mono />
+            <Field label="SLIPPAGE" value={`${scenario.display.slippageBps / 100}%`} danger={scenario.display.slippageBps > data.policy.maxSlippageBps} />
           </div>
           <div className={`untrusted-field ${scenario.id === "prompt-injection" ? "hostile" : ""}`}>
             <span><AlertTriangle size={14} /> UNTRUSTED MEMO</span>
             <code>{scenario.transaction.memo}</code>
           </div>
           <p className="scenario-description">{scenario.description}</p>
+          <CustomReview onReview={runReview} isRunning={isRunning} />
         </div>
 
         <div className="review-panel panel">
-          <PanelHeader icon={Cpu} label={data.status.mode === "demo" ? "SIMULATED COMMITTEE" : "0G COMMITTEE"} meta={`${data.status.models.length} MODELS / UNANIMOUS`} />
+          <PanelHeader icon={Cpu} label={reviewMode === "demo" ? "SIMULATED COMMITTEE" : "0G COMMITTEE"} meta={`${data.status.models.length} MODELS / UNANIMOUS`} />
           <div className="pipeline">
             <PipelineStep number="01" title="Intercept" caption="Isolate proposal" active={phase === "intercept"} done={["inference", "policy", "complete"].includes(phase)} />
-            <PipelineStep number="02" title="0G Committee" caption={data.status.mode === "demo" ? "Local simulation" : "Private Router requests"} active={phase === "inference"} done={["policy", "complete"].includes(phase)} />
+            <PipelineStep number="02" title="0G Committee" caption={reviewMode === "demo" ? "Local simulation" : "Private Router requests"} active={phase === "inference"} done={["policy", "complete"].includes(phase)} />
             <PipelineStep number="03" title="Policy" caption="Deterministic gate" active={phase === "policy"} done={phase === "complete"} />
             <PipelineStep number="04" title="Seal" caption="Permit or block" active={phase === "complete"} done={phase === "complete"} />
           </div>
@@ -323,21 +358,21 @@ function FirewallView({ data, scenario, selectedId, selectScenario, phase, resul
               <p>原始交易将在隔离区内接受对抗式审查。</p>
             </div>
           )}
-          {isRunning && <ScanningState phase={phase} mode={data.status.mode} />}
+          {isRunning && <ScanningState phase={phase} mode={reviewMode} />}
           {result && <Decision result={result} />}
 
-          {error && <div className="inline-error"><XCircle size={16} />{error}</div>}
+          {error && <div className="inline-error" role="alert"><XCircle size={16} />{error}</div>}
 
           <div className="review-actions">
             {!result && (
               <button className="primary-action" onClick={runReview} disabled={isRunning}>
                 {isRunning ? <RefreshCw className="spin" size={18} /> : <Play size={18} fill="currentColor" />}
-                {isRunning ? "正在审查" : "启动私密审查"}
+                {isRunning ? "正在审查" : "启动演示审查"}
               </button>
             )}
             {result?.permit && !result.permit.owner && <span>未指定签名钱包，当前仅审查。</span>}
             {result?.permit?.owner && !signature && (
-              <button className="primary-action safe" onClick={signPermit}><KeyRound size={18} />签署并进入执行适配器</button>
+              <button className="primary-action safe" onClick={signPermit}><KeyRound size={18} />签署并模拟执行</button>
             )}
             {signature && <div className="signed-banner"><Fingerprint size={18} /><span>{execution ? "PERMIT CONSUMED" : "OWNER SIGNED"}<small>{execution ? shortHash(execution.txHash, 14, 10) : shortHash(signature, 14, 10)}</small></span></div>}
             {result && !tamper && (
@@ -356,8 +391,8 @@ function FirewallView({ data, scenario, selectedId, selectScenario, phase, resul
           <div className="policy-rules">
             <PolicyRule icon={Gauge} label="单笔上限" value={money(data.policy.maxValueUsd)} />
             <PolicyRule icon={Activity} label="最大滑点" value={`${data.policy.maxSlippageBps / 100}%`} />
-            <PolicyRule icon={Hexagon} label="资产白名单" value={data.policy.allowedAssets.join(" · ")} />
-            <PolicyRule icon={Network} label="允许网络" value="ETH · BASE · ARB" />
+            <PolicyRule icon={Hexagon} label="资产白名单" value={Object.values(data.policy.allowedAssets).map(({ symbol }) => symbol).join(" · ")} />
+            <PolicyRule icon={Network} label="允许网络" value="Base 演示 · Base Sepolia" />
             <PolicyRule icon={LockKeyhole} label="推理模式" value={data.status.mode === "demo" ? "DEMO" : "PRIVATE / TeeML"} accent />
           </div>
           <div className="policy-hash"><span>POLICY COMMITMENT</span><code>{shortHash(data.policyHash, 16, 10)}</code><Copy size={13} /></div>
@@ -448,7 +483,7 @@ function EvidenceView({ data, result, tamper, onBack }) {
     <div className="secondary-page">
       <section className="page-title"><span>IMMUTABLE EVIDENCE</span><h1>一次决策，三份承诺。</h1><p>交易、策略与模型响应分别哈希；任意一字被修改，即可通过重算与原始承诺对照。</p></section>
       <div className="evidence-grid">
-        <EvidenceCard index="01" icon={Bot} title="Transaction commitment" hash={result.evidence.transactionHash} detail={`${result.transaction.method} · ${money(result.transaction.valueUsd)}`} />
+        <EvidenceCard index="01" icon={Bot} title="Transaction commitment" hash={result.evidence.transactionHash} detail={result.deterministic.facts?.method ?? "Calldata blocked"} />
         <EvidenceCard index="02" icon={LockKeyhole} title="Policy commitment" hash={result.evidence.policyHash} detail={`${data.policy.id} · v${data.policy.version}`} />
         <EvidenceCard index="03" icon={Cpu} title="Committee commitment" hash={result.evidence.responseCommitment} detail={`${result.inference.models.length} reviewers · ${result.inference.mode === "demo" ? "simulation" : result.inference.trustMode}`} />
       </div>
