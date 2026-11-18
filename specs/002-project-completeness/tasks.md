@@ -4,7 +4,8 @@
 - [x] T002 Verify blind committee evidence, defensive refusal cases and three historical Base Router transactions (FR-001, FR-002).
 - [x] T003 Deliver authenticated API, CORS, rate limiting and persistent audit and nonce state. Verify restart and 20 concurrent consumes (FR-003).
 - [x] T004 Implement EIP-712 wallet and API signing, CI workflow and documentation (FR-003).
-- [ ] T004A Verify the wallet's EIP-712 display with an interactive wallet and observe the workflow on a GitHub PR (FR-003).
+- [ ] T004A Verify the wallet's EIP-712 display with an interactive wallet (FR-003).
+- [x] T004B Verify GitHub Actions on the open draft pull request (FR-003).
 - [x] T005 Measure deterministic-policy recall and false-positive rate on the repeatable offline dataset (FR-006).
 - [ ] T005A Measure the live committee on independent, labeled cases and compare results with external baselines (FR-006).
 - [x] T006 Build the SDK, custom calldata UI and full Base Sepolia trading Agent (FR-004, operator choice B).
@@ -27,7 +28,8 @@ The 24-hour run now logs canonical Base Sepolia boundaries and has a verifier fo
 | Evaluation | `npm run eval` runs 104 labeled synthetic cases. It blocked 63/63 expected denials and allowed 41/41 expected approvals. No paid model or third-party calls were made. Outputs are `eval/report.md` and `eval/report.json`. | Verified for the offline deterministic layer |
 | Browser | Embedded Chromium rendered the production build. An authenticated Base Sepolia calldata fixture yielded a simulated ALLOW, and the preset rejection displayed BLOCK with no permit. | Verified locally |
 | Safe and Agent | Foundry covers missing, expired, changed and replayed permits, authorized consumption and restricted caller. Anvil used the canonical Safe 1.5.0 singleton and factory on a Base Sepolia fork. The guarded SDK path exercised authenticated HTTP, controlled two-reviewer responses, SQLite, typed permit issuance, simulation, ERC-20 allowance change and the on-chain guard. A foreign-recipient proposal never reached the signer. | Verified on local fork |
-| Public testnet and CI | Base Sepolia RPC answered `eth_simulateV1` and supplied historical and live read-only data. At preflight the dedicated testnet owner had 0 test ETH, with no ProofGuard Safe or Guard deployed. The 24-hour run also needs a scene with test liquidity and authorization for billable 0G. The existing GitHub PR has not received this working tree. | Pending |
+| GitHub Actions | The `verify` job triggered on [draft PR #2](https://github.com/Fu99966/proofguard-0g/pull/2) at `f82c851` and passed the clean install, application tests, Foundry tests, and production build. [CI run](https://github.com/Fu99966/proofguard-0g/actions/runs/44324144888) | Verified on GitHub |
+| Public testnet | Base Sepolia RPC answered `eth_simulateV1` and supplied market data. The operator authorized up to 12 billable 0G Router requests for the 24-hour run. The dedicated owner had 0 test ETH and 0 test USDC at the last preflight. | Waiting for test funds |
 
 The existing Cloud Run service URL and deployment credentials were unavailable in this workspace. No deployment action was recorded. The public demo route in the new implementation uses local simulated reviews even when the authenticated Agent route is configured with a 0G key.
 
