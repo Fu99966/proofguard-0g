@@ -27,7 +27,7 @@ Authorization: Bearer $ZERO_G_API_KEY
 X-0G-Provider-Trust-Mode: private
 ```
 
-主审模型固定为 `0GM-1.0-35B-A3B`，红队模型固定为 `0GM-1.0-35B-A3B-SIA`。两次请求并行发出，均使用低温度、严格 JSON schema 和超时限制；任一请求失败或返回非 JSON 都会 fail closed。API key 不进入浏览器。
+主审模型固定为 `0GM-1.0-35B-A3B`，红队模型固定为 `0GM-1.0-35B-A3B-SIA`。两次请求并行发出，请求携带 `verify_tee: true`，适配器校验模型、结束原因与裁决字段。任一请求失败、未完成、格式异常或 Router 未确认 TEE 签名，均不会发放许可。API key 不进入浏览器。
 
 ### 3.2 为什么必须使用 Private Computer
 
@@ -37,14 +37,14 @@ X-0G-Provider-Trust-Mode: private
 
 适配器保存：
 
-- 每个 0G 审查节点的 response ID
+- 每个 0G 审查节点的 response ID、Router request ID、provider、chat ID 和 Router TEE 验证结果
 - 两个实际模型名称、角色与独立 verdict
 - token usage 与 latency
 - body 中的 `proof`、`attestation` 或 `verification`
 - header 中所有 `x-0g-*`、`attestation`、`proof` 字段
 - 模型原始响应的本地 SHA-256 commitment
 
-系统不会伪造尚未由 API 返回的 Proof ID。Live 0G attestation、本地哈希承诺和 Demo receipt 在 UI 中使用不同标签。
+只有响应的 `x_0g_trace.tee_verified === true` 表示 Router 报告其验证成功。通用响应头或 Proof 字段的存在本身不代表验证通过。独立验签另按 [0G 官方流程](https://docs.0g.ai/developer-hub/building-on-0g/compute-network/router/features/verifiable-execution) 复核。
 
 ## 4. 核心架构
 
@@ -97,8 +97,9 @@ sequenceDiagram
 
 ```json
 {
-  "version": "proofguard-permit/1",
+  "version": "proofguard-permit/2",
   "decision": "ALLOW",
+  "owner": "0x...",
   "transactionHash": "0x...",
   "policyHash": "0x...",
   "inferenceHash": "0x...",
@@ -146,7 +147,7 @@ sequenceDiagram
 
 ### 5.4 钱包与一次性 Permit
 
-允许结果可以由 EVM 钱包签名。执行适配器恢复签名地址，检查 Permit 是否存在、是否过期、交易是否完全匹配、nonce 是否已使用。成功后立即消费 Permit，重放会被拒绝。
+只有配置 `PROOFGUARD_OWNER_ADDRESS` 后才可消费许可。执行适配器从 EIP-191 签名恢复地址，与 Permit 绑定的策略钱包比对，并检查 Permit、有效期、原始提案和 nonce。成功后在当前进程内立即消费 Permit。
 
 ## 6. 威胁模型
 
@@ -166,7 +167,7 @@ sequenceDiagram
 - 0G 请求 45 秒超时，超时或非 2xx 直接失败关闭。
 - 模型必须返回可解析 JSON；自然语言或缺字段响应不得变成 `ALLOW`。
 - `decision` 除精确 `ALLOW` 外一律归一化为 `BLOCK`。
-- risk score 与 confidence 强制限制在合法范围。
+- risk score 与 confidence 必须是范围内的有限数值。
 - `/api/execute` 对未知、已用、过期、篡改或签名不匹配 Permit 返回 422。
 
 ## 8. 测试与验收
@@ -196,7 +197,7 @@ npm start
 - 无 0G API key 时使用确定性 Demo reviewer，页面明确标记为模拟，不宣称 TEE proof。
 - 执行适配器会真实验证钱包签名和 Permit，但不会广播交易或移动资金。
 - nonce registry 当前为内存存储，服务重启后清空。
-- 美元价值由 Demo 场景提供，生产版需要可信价格预言机。
+- 美元价值、滑点、资产标签和 calldata 描述由提案提供。当前没有 ABI 解码、可信行情、RPC 仿真或链上执行。
 
 这些边界保证演示可重复，同时不对未实现能力作虚假陈述。
 

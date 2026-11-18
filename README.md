@@ -4,7 +4,7 @@
 >
 > 让第二个可信大脑，拦在交易之前。
 
-ProofGuard intercepts every transaction proposed by an AI agent, asks a **two-model 0G Private Computer committee** to review it, compiles both verdicts with deterministic owner policy, and issues a short-lived execution permit only when all three votes approve.
+ProofGuard reviews transaction proposals submitted by an AI agent before execution. A **two-model 0G Private Computer committee** and deterministic owner policy must all approve to issue a short-lived permit for the included execution simulator.
 
 **Hackathon track:** Build with 0G Private Computer · 0G Labs
 
@@ -27,7 +27,7 @@ ProofGuard closes that gap with three independent votes:
 2. **0G SIA red-team critic** independently searches for hidden execution risk and reasons the first reviewer could be wrong.
 3. **Deterministic owner policy** enforces non-negotiable limits for chain, target, asset, value, slippage, approval, and prompt injection.
 
-Unanimous `ALLOW` produces a scoped, expiring, one-time permit. Any rejection, timeout, malformed response, or unavailable reviewer produces no executable permit.
+Unanimous `ALLOW` produces a scoped, expiring, one-time permit. Any rejection, timeout, malformed response, or unavailable reviewer produces no permit. In live mode, the Router must also confirm both TEE signatures.
 
 ## Track compliance
 
@@ -35,7 +35,7 @@ Unanimous `ALLOW` produces a scoped, expiring, one-time permit. Any rejection, t
 |---|---|
 | Official 0G Compute API | Server-side calls to `https://router-api.0g.ai/v1/chat/completions` |
 | At least one 0G model | Two sponsor-native 0G models are called for every live review |
-| Verifiable inference | Returned response IDs, attestation/proof fields, and 0G evidence headers are preserved without fabrication |
+| Verifiable inference | The Router checks both TEE signatures on request; per-reviewer IDs and evidence are preserved for follow-up verification |
 | Web3 + AI | Autonomous EVM transaction firewall, wallet countersignature, scoped one-time permit |
 | Runnable demo | React Web App + Express Agent API; tests and production build included |
 | Submission package | README, technical document, and a timed sub-three-minute recording script |
@@ -48,7 +48,7 @@ Unanimous `ALLOW` produces a scoped, expiring, one-time permit. Any rejection, t
 - Seven deterministic policy checks with fail-closed behavior
 - Three independent commitments: transaction, owner policy, and inference response
 - Tamper challenge that modifies one byte and demonstrates commitment mismatch
-- Optional EVM wallet connection and `personal_sign` permit countersignature
+- Optional EVM wallet connection and `personal_sign` countersignature by the configured policy owner
 - Execution adapter that verifies wallet signature, expiry, transaction hash, and one-time permit consumption
 - Explicitly labelled no-key Demo mode for reliable judging and development
 - Responsive industrial security-console interface
@@ -92,27 +92,28 @@ const response = await fetch("https://router-api.0g.ai/v1/chat/completions", {
       { role: "user", content: reviewPrompt },
     ],
     temperature: 0.1,
+    verify_tee: true,
   }),
 });
 ```
 
-The adapter captures each model's response ID, token usage, any proof/attestation object exposed in the response body, and any `x-0g-*`, `attestation`, or `proof` response headers. It never invents a Proof ID. A single `BLOCK`, invalid JSON, timeout, or failed API request fails the committee closed.
+The adapter captures each model's response ID, Router request ID, provider address, chat ID (`ZG-Res-Key` or response ID), and available proof metadata. Live permit issuance requires both models to return a complete verdict and the Router to report `x_0g_trace.tee_verified: true` for each. Generic response headers and local hashes do not satisfy that requirement. [0G's verification reference](https://docs.0g.ai/developer-hub/building-on-0g/compute-network/router/features/verifiable-execution) explains the Router's result and the SDK path for independent checks.
 
 ## Quick start
 
-Requirements: Node.js 20+ and npm.
+Requirements: Node.js 22.12+ (or 20.19+) and npm.
 
 ```bash
 git clone https://github.com/Fu99966/proofguard-0g.git
 cd proofguard-0g
-npm install
+npm ci
 cp .env.example .env
 npm run dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173).
 
-Without a 0G API key, the application starts in **DEMO / 0G READY** mode. All attack flows, policy checks, permits, commitment verification, tests, and UI work, but the receipt is explicitly labelled as a simulation. **Demo mode is for development only and does not satisfy the hackathon's 0G API requirement; record the submission video in LIVE 0G mode.**
+Without a 0G API key, the application starts in **DEMO / NO 0G CALLS** mode. The four scenarios, policy checks, simulated permits and commitment verification run locally. **Demo mode is for development only and does not satisfy the hackathon's 0G API requirement; record the submission video in LIVE 0G mode.**
 
 For a deterministic local presentation while keeping a configured key unused, set `ZERO_G_FORCE_DEMO=true`. This prevents outbound 0G inference calls and preserves the key in `.env`; it does **not** turn the simulated receipt into 0G evidence.
 
@@ -123,7 +124,7 @@ For a deterministic local presentation while keeping a configured key unused, se
 3. Copy `.env.example` to `.env` and set:
 
 ```dotenv
-ZERO_G_API_KEY=app-sk-your-key
+ZERO_G_API_KEY=your-router-api-key
 ZERO_G_BASE_URL=https://router-api.0g.ai/v1
 ZERO_G_MODEL=0GM-1.0-35B-A3B
 ZERO_G_CRITIC_MODEL=0GM-1.0-35B-A3B-SIA
@@ -133,7 +134,7 @@ PORT=8787
 ```
 
 4. Restart `npm run dev`.
-5. Confirm the header badge reads **LIVE 0G**, the review panel reads **2 MODELS / UNANIMOUS**, and run the safe and injection scenarios.
+5. The **LIVE 0G CONFIGURED** badge indicates configuration only. Run the two synthetic scenarios with `npm run smoke:0g` when you are ready to make four billable Router calls. The command fails unless the safe swap yields `ALLOW`, the injection scenario yields `BLOCK`, and both have two confirmed TEE results and trace identifiers. Compare request IDs with the 0G usage dashboard. The smoke prints Router verification separately from independent verification.
 
 ## Production build
 
@@ -150,7 +151,7 @@ Open [http://localhost:8787](http://localhost:8787).
 2. Run **提示词注入 / INJECTION** and show the hostile memo being treated as untrusted data and blocked.
 3. Click **模拟篡改响应**; a one-byte change produces `COMMITMENT MISMATCH`.
 4. Open **证据室** to show transaction, policy, and inference commitments.
-5. Optionally connect an EVM wallet and sign the permit; the server verifies the recovered address and consumes the nonce once.
+5. To try optional simulated execution, set `PROOFGUARD_OWNER_ADDRESS` to the **public address** of a disposable EVM wallet you control and restart the server. Review again, connect the configured wallet and `personal_sign` the permit hash. The server verifies that signer and consumes the permit once. Review and commitment checks work without a wallet.
 
 The complete 2–3 minute narration and shot list are in [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 
@@ -165,15 +166,16 @@ The complete 2–3 minute narration and shot list are in [docs/DEMO_SCRIPT.md](d
 
 ## Evidence semantics
 
-ProofGuard deliberately distinguishes three kinds of evidence:
+ProofGuard distinguishes four kinds of evidence:
 
 | Evidence | Meaning |
 |---|---|
-| 0G committee evidence | Response IDs and attestation/proof metadata actually returned by both live 0G model calls |
-| Local SHA-256 commitment | Proves that the transaction, policy, or response shown later has not changed |
+| Router TEE verification | The Router reports that it verified each provider signature. Response and request IDs identify the runs. |
+| Independent TEE verification | An external verifier checks the provider signature against its registered TEE signer and the exact returned content. ProofGuard does not perform this check itself. |
+| Local SHA-256 commitment | Recompute and compare with a known original commitment to detect a content change. |
 | Demo receipt | Deterministic simulation for local use; **not** a cryptographic 0G proof |
 
-The 0G product page describes cryptographically signed verified/private inference and notes that public Proof ID support is rolling out. ProofGuard therefore stores returned attestation material when present and otherwise reports that metadata was not exposed; it never fabricates verification.
+For independent verification, start with each reviewer's `provider`, `chatId`, model and exact response content. Follow the [official SDK or manual verification procedure](https://docs.0g.ai/developer-hub/building-on-0g/compute-network/router/features/verifiable-execution#independent-verification-advanced). For the built-in synthetic smoke, the command prints the exact reviewer content. For a separate API review, the exact model content is in `JSON.parse(inference.rawDecision)` under `primary` and `critic`. Treat evidence collected using live, non-synthetic proposals as sensitive.
 
 ## API
 
@@ -183,7 +185,11 @@ The 0G product page describes cryptographically signed verified/private inferenc
 | `GET` | `/api/demo` | Policy, agent, and attack scenarios |
 | `POST` | `/api/review` | Run deterministic and 0G model review; compile permit |
 | `POST` | `/api/verify-commitment` | Detect response or transaction tampering |
-| `POST` | `/api/execute` | Verify wallet signature, permit expiry, exact transaction, and nonce |
+| `POST` | `/api/execute` | Verify the configured owner signature, permit expiry, exact proposal and one-time use |
+
+`/api/review` accepts a `scenarioId` or a `transaction` with a positive integer `chainId`, EVM `target`, non-empty `assetIn`, `assetOut`, `method` and `calldata` descriptions, finite nonnegative numeric `valueUsd`, and a nonnegative integer `slippageBps`. Supply numeric `approvalUsd` for `approve(...)`. Invalid proposals return 400 before inference. Policy or reviewer vetoes return `BLOCK` with `permit: null`. Router failures return 502 and invalid live configuration returns 503, both without a permit.
+
+`/api/execute` takes `permitHash`, the unchanged `transaction` and the `signature`. The signer comes from the operator's policy configuration, not the HTTP request. Returned `txHash` is a local simulation receipt ID.
 
 ## Tests
 
@@ -192,7 +198,7 @@ npm test
 npm run build
 ```
 
-The tests cover safe transactions, prompt injection, unknown contracts, non-allowlisted assets, unlimited approvals, excessive slippage, three-vote permit issuance, committee veto behavior, stable hashing, and fail-closed model parsing.
+The tests exercise the four demo scenarios, live Router response fixtures, no-key and force-demo behavior, invalid input, signer binding, expiration, concurrent reuse and commitment recomputation. Fixtures keep the test suite offline and do not establish live 0G acceptance.
 
 ## Repository map
 
@@ -215,8 +221,8 @@ docs/plans/                  Validated product design
 - All model-controlled fields are untrusted input; malformed model output fails closed.
 - Policy checks are independent from model output.
 - Permits bind exact transaction hash, policy hash, inference hash, target, chain, expiry, and nonce.
-- The execution adapter consumes permits once and validates the wallet signature.
-- The included executor is a safe simulation and does not broadcast or move funds.
+- The execution adapter consumes permits once in the current process and checks the configured signer. Without an owner address it does not consume permits.
+- The included executor is a simulation. Proposal values, asset labels, slippage and calldata descriptions are supplied inputs. The demo does not decode ABI, check prices, intercept wallet calls, broadcast transactions or move funds.
 - Production deployment should add authenticated sessions, persistent nonce storage, rate limits, an audited Safe module, RPC simulation, bytecode reputation, and onchain attestation verification when the official verifier interface is available.
 
 ## Roadmap

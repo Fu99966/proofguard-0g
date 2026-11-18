@@ -31,6 +31,12 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+const modeLabels = {
+  live: "LIVE 0G CONFIGURED",
+  demo: "DEMO / NO 0G CALLS",
+  unavailable: "0G CONFIG ERROR",
+};
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const shortHash = (value, start = 12, end = 8) => value ? `${value.slice(0, start)}…${value.slice(-end)}` : "—";
 const money = (value) => `$${Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
@@ -96,19 +102,16 @@ function App() {
       setPhase("intercept");
       appendLog("Transaction intercepted before wallet broadcast");
       await sleep(520);
-      appendLog("Calldata decoded; untrusted fields isolated");
+      appendLog("Untrusted proposal fields isolated for review");
       setPhase("inference");
-      appendLog(`Routing encrypted review to ${data.status.models.join(" + ")}`);
+      appendLog(data.status.mode === "demo" ? "Running two simulated reviews locally" : "Requesting private review from the 0G Router");
 
-      const responsePromise = fetch("/api/review", {
+      const response = await fetch("/api/review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ scenarioId: selectedId }),
       });
 
-      await sleep(760);
-      appendLog(`0G ${data.status.models.length}-model committee running in ${data.status.trustMode.toUpperCase()} mode`);
-      const response = await responsePromise;
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Review failed");
 
@@ -130,39 +133,41 @@ function App() {
 
   async function connectWallet() {
     setError("");
-    if (!window.ethereum) {
-      setError("未检测到 EVM 钱包。Demo 审查仍可运行；签署 Permit 需要 MetaMask 或兼容钱包。");
-      return;
+    try {
+      if (!window.ethereum) throw new Error("未检测到兼容的 EVM 钱包。");
+      const [account] = await window.ethereum.request({ method: "eth_requestAccounts" });
+      setWallet(account || "");
+      return account;
+    } catch (reason) {
+      setError(reason.message || "钱包连接失败");
     }
-    const [account] = await window.ethereum.request({ method: "eth_requestAccounts" });
-    setWallet(account);
   }
 
   async function signPermit() {
     try {
-      if (!wallet) await connectWallet();
-      const accounts = await window.ethereum.request({ method: "eth_accounts" });
-      const account = wallet || accounts[0];
+      setError("");
+      const account = await connectWallet();
       if (!account) return;
+      if (account.toLowerCase() !== result.permit.owner.toLowerCase()) {
+        throw new Error("当前钱包不是策略指定的签名钱包。");
+      }
       const signed = await window.ethereum.request({
         method: "personal_sign",
         params: [result.permit.permitHash, account],
       });
       setWallet(account);
-      setSignature(signed);
-      appendLog("Owner wallet countersigned execution permit", "success");
       const response = await fetch("/api/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           permitHash: result.permit.permitHash,
           transaction: result.transaction,
-          owner: account,
           signature: signed,
         }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Execution adapter rejected the permit");
+      setSignature(signed);
       setExecution(payload);
       appendLog("Signature verified; one-time permit consumed", "success");
     } catch (reason) {
@@ -172,14 +177,20 @@ function App() {
 
   async function testTamper() {
     const modified = `${result.inference.rawDecision} `;
-    const response = await fetch("/api/verify-commitment", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: modified, expectedHash: result.evidence.responseCommitment }),
-    });
-    const verification = await response.json();
-    setTamper(verification);
-    appendLog("Tampered model response rejected: commitment mismatch", "danger");
+    try {
+      setError("");
+      const response = await fetch("/api/verify-commitment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: modified, expectedHash: result.evidence.responseCommitment }),
+      });
+      const verification = await response.json();
+      if (!response.ok || verification.valid !== false) throw new Error("Unconfirmed mismatch");
+      setTamper(verification);
+      appendLog("Tampered model response rejected: commitment mismatch", "danger");
+    } catch {
+      setError("未能确认篡改检测结果。");
+    }
   }
 
   if (!data) {
@@ -208,7 +219,7 @@ function App() {
         </nav>
         <div className="top-actions">
           <span className={`network-badge ${data.status.mode}`}>
-            <i /> {data.status.mode === "live" ? "LIVE 0G" : "DEMO / 0G READY"}
+            <i /> {modeLabels[data.status.mode]}
           </span>
           <button className="wallet-button" onClick={connectWallet}>
             <Wallet size={15} /> {wallet ? shortHash(wallet, 6, 4) : "连接钱包"}
@@ -250,12 +261,12 @@ function FirewallView({ data, scenario, selectedId, selectScenario, phase, resul
         <div className="hero-copy">
           <span className="kicker"><CircleDot size={13} /> AUTONOMOUS AGENT SAFETY LAYER</span>
           <h1>让第二个可信大脑，<br /><em>拦在交易之前。</em></h1>
-          <p>每笔 Agent 交易都经过 0G 双模型私密审查与确定性策略复核。三票全部通过，才签发可执行 Permit。</p>
+          <p>Agent 提交交易提案，经双模型委员会和确定性策略复核。三票全部通过，才签发限时模拟执行许可。</p>
         </div>
         <div className="hero-stat">
-          <span>PROTECTED VALUE</span>
+          <span>DEMO TREASURY</span>
           <strong>$2.48M</strong>
-          <small><i /> Policy enforcement active</small>
+          <small><i /> Illustration</small>
         </div>
       </section>
 
@@ -296,10 +307,10 @@ function FirewallView({ data, scenario, selectedId, selectScenario, phase, resul
         </div>
 
         <div className="review-panel panel">
-          <PanelHeader icon={Cpu} label="0G VERIFIABLE COMMITTEE" meta={`${data.status.models.length} MODELS / UNANIMOUS`} />
+          <PanelHeader icon={Cpu} label={data.status.mode === "demo" ? "SIMULATED COMMITTEE" : "0G COMMITTEE"} meta={`${data.status.models.length} MODELS / UNANIMOUS`} />
           <div className="pipeline">
-            <PipelineStep number="01" title="Intercept" caption="Decode + isolate" active={phase === "intercept"} done={["inference", "policy", "complete"].includes(phase)} />
-            <PipelineStep number="02" title="0G Committee" caption={`${data.status.models.length}× private inference`} active={phase === "inference"} done={["policy", "complete"].includes(phase)} />
+            <PipelineStep number="01" title="Intercept" caption="Isolate proposal" active={phase === "intercept"} done={["inference", "policy", "complete"].includes(phase)} />
+            <PipelineStep number="02" title="0G Committee" caption={data.status.mode === "demo" ? "Local simulation" : "Private Router requests"} active={phase === "inference"} done={["policy", "complete"].includes(phase)} />
             <PipelineStep number="03" title="Policy" caption="Deterministic gate" active={phase === "policy"} done={phase === "complete"} />
             <PipelineStep number="04" title="Seal" caption="Permit or block" active={phase === "complete"} done={phase === "complete"} />
           </div>
@@ -312,8 +323,8 @@ function FirewallView({ data, scenario, selectedId, selectScenario, phase, resul
               <p>原始交易将在隔离区内接受对抗式审查。</p>
             </div>
           )}
-          {isRunning && <ScanningState phase={phase} model={data.status.model} />}
-          {result && <Decision result={result} mode={data.status.mode} />}
+          {isRunning && <ScanningState phase={phase} mode={data.status.mode} />}
+          {result && <Decision result={result} />}
 
           {error && <div className="inline-error"><XCircle size={16} />{error}</div>}
 
@@ -324,14 +335,15 @@ function FirewallView({ data, scenario, selectedId, selectScenario, phase, resul
                 {isRunning ? "正在审查" : "启动私密审查"}
               </button>
             )}
-            {result?.decision === "ALLOW" && !signature && (
+            {result?.permit && !result.permit.owner && <span>未指定签名钱包，当前仅审查。</span>}
+            {result?.permit?.owner && !signature && (
               <button className="primary-action safe" onClick={signPermit}><KeyRound size={18} />签署并进入执行适配器</button>
             )}
             {signature && <div className="signed-banner"><Fingerprint size={18} /><span>{execution ? "PERMIT CONSUMED" : "OWNER SIGNED"}<small>{execution ? shortHash(execution.txHash, 14, 10) : shortHash(signature, 14, 10)}</small></span></div>}
             {result && !tamper && (
               <button className="tamper-button" onClick={testTamper}><ShieldAlert size={16} />模拟篡改响应</button>
             )}
-            {tamper && <div className="tamper-alert"><OctagonX size={18} /><span>COMMITMENT MISMATCH<small>篡改结果已拒绝执行</small></span></div>}
+            {tamper && <div className="tamper-alert"><OctagonX size={18} /><span>COMMITMENT MISMATCH<small>响应与原始承诺不一致</small></span></div>}
           </div>
         </div>
 
@@ -346,7 +358,7 @@ function FirewallView({ data, scenario, selectedId, selectScenario, phase, resul
             <PolicyRule icon={Activity} label="最大滑点" value={`${data.policy.maxSlippageBps / 100}%`} />
             <PolicyRule icon={Hexagon} label="资产白名单" value={data.policy.allowedAssets.join(" · ")} />
             <PolicyRule icon={Network} label="允许网络" value="ETH · BASE · ARB" />
-            <PolicyRule icon={LockKeyhole} label="推理模式" value="PRIVATE / TeeML" accent />
+            <PolicyRule icon={LockKeyhole} label="推理模式" value={data.status.mode === "demo" ? "DEMO" : "PRIVATE / TeeML"} accent />
           </div>
           <div className="policy-hash"><span>POLICY COMMITMENT</span><code>{shortHash(data.policyHash, 16, 10)}</code><Copy size={13} /></div>
           <div className="live-log">
@@ -381,10 +393,10 @@ function PolicyRule({ icon: Icon, label, value, accent }) {
   return <div><Icon size={15} /><span>{label}</span><strong className={accent ? "accent" : ""}>{value}</strong></div>;
 }
 
-function ScanningState({ phase, model }) {
+function ScanningState({ phase, mode }) {
   const copy = {
-    intercept: ["INTERCEPTING", "正在解码 calldata 与隔离不可信字段"],
-    inference: ["PRIVATE INFERENCE", `${model} 正在 TEE 中进行对抗审查`],
+    intercept: ["INTERCEPTING", "正在隔离提案中的不可信字段"],
+    inference: mode === "demo" ? ["SIMULATED REVIEW", "正在本地运行模拟审查"] : ["PRIVATE REVIEW", "等待 0G Router 返回两份裁决"],
     policy: ["COMPILING POLICY", "正在将 AI 判断与确定性规则合并"],
   }[phase];
   return (
@@ -395,14 +407,14 @@ function ScanningState({ phase, model }) {
   );
 }
 
-function Decision({ result, mode }) {
+function Decision({ result }) {
   const allowed = result.decision === "ALLOW";
   return (
     <div className={`decision ${allowed ? "allow" : "block"}`}>
       <div className="decision-icon">{allowed ? <ShieldCheck size={38} /> : <OctagonX size={38} />}</div>
       <span>{allowed ? "EXECUTION PERMIT ISSUED" : "TRANSACTION BLOCKED"}</span>
-      <h2>{allowed ? "三票一致审查通过" : "任一审查票已否决"}</h2>
-      <p>{result.inference.summary}</p>
+      <h2>{allowed ? "三票一致审查通过" : "审查未通过"}</h2>
+      <p>{result.deterministic.passed ? result.inference.summary : `未通过确定性策略：${result.deterministic.checks.filter((check) => !check.passed).map((check) => check.label).join("、")}`}</p>
       <div className="decision-metrics">
         <div><span>RISK</span><strong>{result.inference.riskScore}</strong></div>
         <div><span>VOTES</span><strong>{result.inference.committee.filter((reviewer) => reviewer.decision === "ALLOW").length}/{result.inference.committee.length}</strong></div>
@@ -410,7 +422,7 @@ function Decision({ result, mode }) {
       </div>
       <div className={`receipt-status ${result.inference.receipt.verified ? "verified" : "simulated"}`}>
         {result.inference.receipt.verified ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
-        {mode === "live" ? result.inference.receipt.label : "SIMULATED DECISION — ADD 0G KEY FOR LIVE PROOF"}
+        {result.inference.receipt.label}
       </div>
     </div>
   );
@@ -421,9 +433,9 @@ function EvidenceRibbon({ result }) {
     <section className={`evidence-ribbon ${result.decision.toLowerCase()}`}>
       <div><ShieldCheck size={22} /><span>DECISION</span><strong>{result.decision}</strong></div>
       <div><span>0G COMMITTEE</span><strong>{result.inference.models.length} MODELS</strong></div>
-      <div><span>TRUST</span><strong>{result.inference.trustMode.toUpperCase()}</strong></div>
+      <div><span>TRUST</span><strong>{result.inference.mode === "demo" ? "SIMULATION" : result.inference.trustMode.toUpperCase()}</strong></div>
       <div><span>TX COMMITMENT</span><code>{shortHash(result.evidence.transactionHash)}</code></div>
-      <div><span>PERMIT</span><code>{shortHash(result.permit.permitHash)}</code></div>
+      <div><span>PERMIT</span><code>{shortHash(result.permit?.permitHash)}</code></div>
     </section>
   );
 }
@@ -434,20 +446,27 @@ function EvidenceView({ data, result, tamper, onBack }) {
   }
   return (
     <div className="secondary-page">
-      <section className="page-title"><span>IMMUTABLE EVIDENCE</span><h1>一次决策，三份承诺。</h1><p>交易、策略与模型响应分别哈希；任意一字被修改，执行许可立即失效。</p></section>
+      <section className="page-title"><span>IMMUTABLE EVIDENCE</span><h1>一次决策，三份承诺。</h1><p>交易、策略与模型响应分别哈希；任意一字被修改，即可通过重算与原始承诺对照。</p></section>
       <div className="evidence-grid">
         <EvidenceCard index="01" icon={Bot} title="Transaction commitment" hash={result.evidence.transactionHash} detail={`${result.transaction.method} · ${money(result.transaction.valueUsd)}`} />
         <EvidenceCard index="02" icon={LockKeyhole} title="Policy commitment" hash={result.evidence.policyHash} detail={`${data.policy.id} · v${data.policy.version}`} />
-        <EvidenceCard index="03" icon={Cpu} title="Committee commitment" hash={result.evidence.responseCommitment} detail={`${result.inference.models.length}× 0G models · ${result.inference.trustMode}`} />
+        <EvidenceCard index="03" icon={Cpu} title="Committee commitment" hash={result.evidence.responseCommitment} detail={`${result.inference.models.length} reviewers · ${result.inference.mode === "demo" ? "simulation" : result.inference.trustMode}`} />
       </div>
       <section className="receipt-sheet">
-        <div className="receipt-head"><div><Fingerprint size={25} /><span>PROOFGUARD RECEIPT<small>{result.permit.version}</small></span></div><strong className={result.decision.toLowerCase()}>{result.decision}</strong></div>
-        <ReceiptRow label="Permit hash" value={result.permit.permitHash} />
+        <div className="receipt-head"><div><Fingerprint size={25} /><span>PROOFGUARD RECEIPT<small>{result.permit?.version || "NO PERMIT"}</small></span></div><strong className={result.decision.toLowerCase()}>{result.decision}</strong></div>
+        <ReceiptRow label="Permit hash" value={result.permit?.permitHash || "Not issued"} />
         <ReceiptRow label="0G response ID" value={result.inference.receipt.responseId || "Not exposed by router"} />
         <ReceiptRow label="Attestation status" value={result.inference.receipt.label} />
         <ReceiptRow label="Committee" value={result.inference.committee.map((reviewer) => `${reviewer.role}:${reviewer.model}:${reviewer.decision}`).join(" | ")} />
-        <ReceiptRow label="Issued / expires" value={`${result.permit.issuedAt}  →  ${result.permit.expiresAt}`} />
-        <ReceiptRow label="Scoped target" value={result.permit.scope.target} />
+        {result.permit && (
+          <>
+            <ReceiptRow label="Issued / expires" value={`${result.permit.issuedAt}  →  ${result.permit.expiresAt}`} />
+            <ReceiptRow label="Scoped target" value={result.permit.scope.target} />
+          </>
+        )}
+        {result.inference.mode === "live" && result.inference.receipt.responses.map((receipt) => (
+          <ReceiptRow key={receipt.role} label={`${receipt.role} Router request`} value={receipt.requestId || "Not exposed by router"} />
+        ))}
         {tamper && <div className="receipt-tamper"><OctagonX size={18} /><span>TAMPER TEST FAILED CLOSED</span><code>{shortHash(tamper.actualHash, 18, 12)}</code></div>}
       </section>
     </div>
