@@ -1,6 +1,9 @@
 import { Interface, keccak256 } from "ethers";
 import { expect, it } from "vitest";
 import { guardAbi } from "../../sdk/guard.js";
+import { baseSepolia } from "../../sdk/network.js";
+import { stableHash } from "../../server/policyEngine.js";
+import { checkRecipientRejection } from "./rejection.js";
 import { verifyAgentRun } from "./verify-run.js";
 
 const address = (digit) => `0x${digit.repeat(40)}`;
@@ -21,6 +24,13 @@ const scope = { runId: "fixture", mode: "testnet" };
 const boundary = { ...scope, chainId: 84532, agent, guard: guardAddress, safe };
 const at = (offset) => new Date((startingTime + offset) * 1_000).toISOString();
 
+const probe = { chainId: baseSepolia.chainId, from: safe, to: baseSepolia.usdc, value: "0",
+  data: new Interface(["function transfer(address,uint256)"]).encodeFunctionData("transfer", ["0x000000000000000000000000000000000000dead", 0n]) };
+const reviewers = ["primary", "critic"].map((role) => ({ role, model: `model-${role}`, decision: "ALLOW",
+  requestId: `router-${role}`, verification: "router-verified" }));
+const rejectionEntry = { event: "recipient-rejected", transaction: probe, decision: "BLOCK", permit: null,
+  blockers: ["recipient"], transactionHash: stableHash(probe), reviews: reviewers };
+
 function fixture() {
   const logs = [{ address: guardAddress, ...guard.encodeEventLog("PermitConsumed", [permitHash, `0x${nonce}`, target]) }];
   const audit = { decision: "ALLOW", onchainPermit: { verifyingContract: guardAddress },
@@ -36,6 +46,7 @@ function fixture() {
     ...Array.from({ length: 288 }, (_, index) => ({ ...scope, event: "position", at: at(index * 300) })),
     { ...scope, event: "submitted", at: at(310), txHash, permitHash },
     { ...scope, event: "confirmed", at: at(320), txHash, permitHash },
+    { ...scope, ...rejectionEntry, at: at(330) },
     { ...boundary, event: "run-finished", at: at(duration), blockTag: 20, blockHash: blocks[20].hash, nonce: 5 },
   ].sort((a, b) => a.at.localeCompare(b.at));
   const transaction = { nonce: 4, from: agent, to: guardAddress, value: 0n,
@@ -54,7 +65,7 @@ function fixture() {
 
 it("reconciles a complete 24-hour journal against all Agent nonces and the guarded swap", async () => {
   const evidence = fixture();
-  await expect(verifyAgentRun(evidence.entries, evidence)).resolves.toMatchObject({ observations: 288, guardedTransactions: 1, swaps: 1 });
+  await expect(verifyAgentRun(evidence.entries, evidence)).resolves.toMatchObject({ observations: 288, guardedTransactions: 1, swaps: 1, recipientRejections: 1 });
 });
 
 it("rejects an unjournaled on-chain transaction in the Agent nonce range", async () => {
@@ -79,4 +90,30 @@ it("rejects a journal entry without a matching chain Permit or Router verificati
   evidence.receipt.logs = logs;
   evidence.audit.reviews[1].verification = "simulation";
   await expect(verifyAgentRun(evidence.entries, evidence)).rejects.toThrow("Router-verified approvals");
+});
+
+
+it("requires a recipient rejection bound to the zero-value proposal and the 24-hour window", async () => {
+  const evidence = fixture();
+  const entry = evidence.entries.find(({ event }) => event === "recipient-rejected");
+  entry.transactionHash = hash("f");
+  await expect(verifyAgentRun(evidence.entries, evidence)).rejects.toThrow("recipient rejection");
+  entry.transactionHash = rejectionEntry.transactionHash;
+  entry.at = at(duration + 60);
+  await expect(verifyAgentRun(evidence.entries, evidence)).rejects.toThrow("recipient rejection");
+});
+
+it("runs the rejection via the review endpoint and requires a live receipt with no Permit", async () => {
+  const response = { transaction: probe, decision: "BLOCK", permit: null,
+    deterministic: { blockers: ["recipient"] }, evidence: { transactionHash: stableHash(probe) },
+    inference: { mode: "live", committee: reviewers.map(({ role, model, decision, verification, requestId }) => ({
+      role, model, decision, receipt: { verification, requestId },
+    })) } };
+  const client = { review: async (transaction) => {
+    expect(transaction).toEqual(probe);
+    return response;
+  } };
+  await expect(checkRecipientRejection(client, safe)).resolves.toEqual(rejectionEntry);
+  response.onchainPermit = { signature: "0x" };
+  await expect(checkRecipientRejection(client, safe)).rejects.toThrow("verified policy rejection");
 });
