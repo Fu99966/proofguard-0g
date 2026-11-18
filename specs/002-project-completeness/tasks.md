@@ -15,6 +15,9 @@
 
 ## Acceptance recorded 2026-11-18
 
+The 24-hour run now logs canonical Base Sepolia boundaries and has a verifier for observation continuity, the full Agent nonce range, guard receipts, the matching audit decisions and a successful swap. Four local fixture tests cover complete evidence, an unjournaled chain nonce, an observation gap or short window, and missing chain or Router evidence. The public run is pending.
+
+
 | Scope | Evidence | Status |
 | --- | --- | --- |
 | Defensive checks | `server/bypass.test.js` exercises conflicting or invalid self-reports, unknown contract operations, unknown Router commands, foreign sender and receiver, out-of-list assets, unbounded allowances, quote deviation and slippage. The refusal cases run against the corrected implementation. The original vulnerable revision was not replayed. | Verified on corrected build |

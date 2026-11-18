@@ -9,10 +9,10 @@ export function createProofGuardClient({ apiUrl, apiKey, now = Date.now }) {
   }
   if (!apiKey) throw new Error("A ProofGuard Agent key is required.");
 
-  async function review(transaction) {
-    const response = await fetch(new URL("/api/review", url), {
-      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ transaction }), signal: AbortSignal.timeout(100_000), redirect: "error",
+  async function request(path, options) {
+    const response = await fetch(new URL(path, url), {
+      ...options, headers: { ...options?.headers, Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(100_000), redirect: "error",
     });
     const payload = await response.json();
     if (!response.ok) {
@@ -21,6 +21,16 @@ export function createProofGuardClient({ apiUrl, apiKey, now = Date.now }) {
       throw error;
     }
     return payload;
+  }
+
+  function review(transaction) {
+    return request("/api/review", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transaction }) });
+  }
+
+  function audit(permitHash) {
+    if (!/^0x[0-9a-f]{64}$/i.test(permitHash)) throw new Error("Invalid permit hash.");
+    return request(`/api/audit/${permitHash}`);
   }
 
   async function guardedSend(transaction, submit, { inspect = async () => {}, verifyingContract } = {}) {
@@ -39,5 +49,5 @@ export function createProofGuardClient({ apiUrl, apiKey, now = Date.now }) {
     if (Number(typedData.message.deadline) * 1000 <= now()) throw new Error("Permit expired before submission.");
     return submit({ transaction: snapshot, result, typedData });
   }
-  return { review, guardedSend };
+  return { review, audit, guardedSend };
 }

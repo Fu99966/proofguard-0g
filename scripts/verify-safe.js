@@ -81,7 +81,9 @@ try {
     "function allowance(address owner,address spender) view returns(uint256)"], provider);
   const approval = { chainId: baseSepolia.chainId, from: safe, to: baseSepolia.usdc, value: "0",
     data: token.interface.encodeFunctionData("approve", [baseSepolia.permit2, 1_000_000n]) };
+  let approvalPermit;
   const outcome = await client.guardedSend(approval, async ({ transaction, result, typedData }) => {
+    approvalPermit = result.permit.permitHash;
     const sent = await asAgent.executeGuarded(transaction.to, transaction.value, transaction.data, typedData.message, result.onchainPermit.signature);
     return sent.wait();
   }, { verifyingContract: guardAddress, inspect: async ({ result, typedData }) => {
@@ -93,6 +95,11 @@ try {
   } });
   if (outcome.status !== 1 || await token.allowance(safe, baseSepolia.permit2) !== 1_000_000n || new Set(generatedProofRequests).size !== 2) {
     throw new Error("Guarded API and SDK integration failed");
+  }
+  const audit = await client.audit(approvalPermit);
+  if (audit.permit?.permitHash !== approvalPermit || audit.reviews?.length !== 2
+    || audit.reviews.some(({ requestId, verification }) => !requestId || verification !== "router-verified")) {
+    throw new Error("The fork approval is missing its audit evidence");
   }
   const unauthorized = new Interface(["function transfer(address recipient,uint256 amount)"]);
   const unacceptable = { ...approval, data: unauthorized.encodeFunctionData("transfer", [safeRecipient, 1n]) };

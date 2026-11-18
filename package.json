@@ -12,7 +12,8 @@
     "smoke:0g": "node scripts/live-zero-g-smoke.js",
     "eval": "node eval/run.js",
     "test:contracts": "node node_modules/@foundry-rs/forge/bin.mjs test",
-    "agent:rebalance": "node examples/rebalancer/run.js"
+    "agent:rebalance": "node examples/rebalancer/run.js",
+    "agent:verify": "node scripts/verify-agent-run.js"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.6",

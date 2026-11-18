@@ -25,7 +25,13 @@ For the agent process, set `PROOFGUARD_RPC_URL`, `PROOFGUARD_ETH_USD_FEED`, `PRO
 npm run agent:rebalance -- --send --observe-24h
 ```
 
-The SDK asks for live review before every approval and swap. It verifies the issuer, replays the specific Safe call through `eth_simulateV1`, checks simulated token movements and verifies the confirmation's `PermitConsumed` event. Match each submitted transaction hash to its confirmed permit and retrieve the corresponding review via `/api/audit/:permitHash`. Set the server's persistent Router budget for a bounded test run.
+The SDK asks for live review before every approval and swap. It verifies the issuer, replays the specific Safe call through `eth_simulateV1`, checks simulated token movements and verifies the confirmation's `PermitConsumed` event. Set the server's persistent Router budget for a bounded test run. After `run-finished`, verify the journal with the same Agent API and Base Sepolia RPC settings.
+
+```bash
+npm run agent:verify -- <run-id>
+```
+
+The verifier checks the journal for observation gaps and compares its start and end to canonical Base Sepolia blocks at least 24 hours apart. It accounts for the entire Agent nonce range and matches each successful Safe Guard transaction to its `PermitConsumed` event, approved calldata and two Router-verified audit decisions. At least one confirmed swap is required. Record the rejected-recipient test separately.
 
 ## Safe fork verification
 
