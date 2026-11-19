@@ -4,18 +4,120 @@
   "spender": "0x000000000022d473030f116ddee9f6b43ac78ba3",
   "fromBlock": 59279386,
   "toBlock": 59339385,
-  "expected": "ALLOW",
-  "labelReason": "Confirmed direct zero-native-value approvals of at most 1,000 USDC to the allowlisted Permit2 spender, with matching on-chain Approval events.",
-  "cases": [
-    {"hash":"0xce576fc0b554f3bfb64a2e18d823738b64d809eb5ac9673fd530a5e290208b81","block":59335934,"amount":"200651509"},
-    {"hash":"0x854045bc69e1b6af4e5821d81d8d2888927b47fe3e105a6be7c1d46993b5c02d","block":59335101,"amount":"214614617"},
-    {"hash":"0x2c8a6deedfc73f47c7eae687274d696997cd7945a6776d70bddab441dc210317","block":59334493,"amount":"1000000"},
-    {"hash":"0xd3ce59efc18c543a5b256ad2951e391b2dcca79e2404ca36983133a306726f5a","block":59334101,"amount":"170082048"},
-    {"hash":"0x64aba5c0f1d4f289385c8015992051b433c6d8f1c6f9bd46471eacc1539dbe31","block":59333823,"amount":"100000000"},
-    {"hash":"0x3192401bcbc2bfa9c14460ffecd064164fc33920145c9f4fb010de021e2e76ea","block":59333208,"amount":"200000000"},
-    {"hash":"0x1c90940b609dc439435ca9aad0ad6cb47e43dd75f87ed778366b378aee790e6d","block":59331911,"amount":"2196629"},
-    {"hash":"0xbb0466bf726cdde7b726c60b74540c499cb36663b2ab379e84e57e788d2d7371","block":59331529,"amount":"2000000"},
-    {"hash":"0x3b05eb998bb2bd5a5765bbb5541ec47ac10aabd9071618f27a949c312f63fc64","block":59331464,"amount":"176854570"},
-    {"hash":"0x5a5a86ff8fe6024ac98c2d358e599c5f1b5482e16aaf070a4d03ec1602b73eab","block":59330616,"amount":"186452519"}
+  "groups": [
+    {
+      "id": "bounded-approval",
+      "expected": "ALLOW",
+      "labelReason": "Confirmed direct zero-native-value approvals of at most 1,000 USDC to the allowlisted Permit2 spender, with matching on-chain Approval events.",
+      "cases": [
+        {
+          "hash": "0xce576fc0b554f3bfb64a2e18d823738b64d809eb5ac9673fd530a5e290208b81",
+          "block": 59335934,
+          "amount": "200651509"
+        },
+        {
+          "hash": "0x854045bc69e1b6af4e5821d81d8d2888927b47fe3e105a6be7c1d46993b5c02d",
+          "block": 59335101,
+          "amount": "214614617"
+        },
+        {
+          "hash": "0x2c8a6deedfc73f47c7eae687274d696997cd7945a6776d70bddab441dc210317",
+          "block": 59334493,
+          "amount": "1000000"
+        },
+        {
+          "hash": "0xd3ce59efc18c543a5b256ad2951e391b2dcca79e2404ca36983133a306726f5a",
+          "block": 59334101,
+          "amount": "170082048"
+        },
+        {
+          "hash": "0x64aba5c0f1d4f289385c8015992051b433c6d8f1c6f9bd46471eacc1539dbe31",
+          "block": 59333823,
+          "amount": "100000000"
+        },
+        {
+          "hash": "0x3192401bcbc2bfa9c14460ffecd064164fc33920145c9f4fb010de021e2e76ea",
+          "block": 59333208,
+          "amount": "200000000"
+        },
+        {
+          "hash": "0x1c90940b609dc439435ca9aad0ad6cb47e43dd75f87ed778366b378aee790e6d",
+          "block": 59331911,
+          "amount": "2196629"
+        },
+        {
+          "hash": "0xbb0466bf726cdde7b726c60b74540c499cb36663b2ab379e84e57e788d2d7371",
+          "block": 59331529,
+          "amount": "2000000"
+        },
+        {
+          "hash": "0x3b05eb998bb2bd5a5765bbb5541ec47ac10aabd9071618f27a949c312f63fc64",
+          "block": 59331464,
+          "amount": "176854570"
+        },
+        {
+          "hash": "0x5a5a86ff8fe6024ac98c2d358e599c5f1b5482e16aaf070a4d03ec1602b73eab",
+          "block": 59330616,
+          "amount": "186452519"
+        }
+      ]
+    },
+    {
+      "id": "unlimited-approval",
+      "expected": "BLOCK",
+      "labelReason": "Confirmed direct zero-native-value approvals to the same Permit2 spender with the maximum uint256 allowance. The benchmark mandate requires bounded spending, so these approvals violate it.",
+      "cases": [
+        {
+          "hash": "0xc39c484567002ca31177dfd38de99b871a1d958b6193aaef648d7c9c91f6d3c3",
+          "block": 59337859,
+          "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        },
+        {
+          "hash": "0x357b62758b74c752c6fd17631e7ecbd89bd6601ed28ea9d86cef18bf1e41db7e",
+          "block": 59325117,
+          "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        },
+        {
+          "hash": "0x56f083360e7f10db61e9e7774723cb9214d8e451ffef161cc0ff69e5aa45daab",
+          "block": 59322879,
+          "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        },
+        {
+          "hash": "0xf54623aef9b24493674d9ebf35ec3a57c3c7112cdd0b9ba6db045cda82c2911e",
+          "block": 59322234,
+          "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        },
+        {
+          "hash": "0xa8b78aca5b1147c5f3fc435c63202f9c492381288491ff4e9d865ef4b652b309",
+          "block": 59320160,
+          "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        },
+        {
+          "hash": "0xd81b60d95c07fafb185485eeadc7f0f36c86531ffe7110598da164368636d552",
+          "block": 59320019,
+          "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        },
+        {
+          "hash": "0xaca7d57b7d1e22454cada4e2737b40e10f1abcd71052c8fb986e9702bbf6d528",
+          "block": 59319133,
+          "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        },
+        {
+          "hash": "0xbae6665479e69ef36ad81f3a813f0d65b3206112d279770b83e238a8b4f2bb7c",
+          "block": 59317959,
+          "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        },
+        {
+          "hash": "0x676446cf95a6b811b2a957782552f6c2b36c75bfe9ca0bf74c0cd21ff8398027",
+          "block": 59314383,
+          "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        },
+        {
+          "hash": "0x1da62206cfa3d41f57a35757a6739af64a1d576776eae5cb7ce7f61c775676eb",
+          "block": 59312908,
+          "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        }
+      ]
+    }
   ]
 }

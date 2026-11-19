@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { Interface, toQuantity } from "ethers";
+import { Interface, MaxUint256, toQuantity } from "ethers";
 import { policy } from "../server/demoData.js";
 import { rpcProvider } from "../server/market.js";
 import { evaluatePolicy } from "../server/policyEngine.js";
@@ -17,18 +17,24 @@ const sameAddress = (left, right) => typeof left === "string" && left.toLowerCas
 const provider = rpcProvider("https://base-rpc.publicnode.com");
 const goPlusUrl = "https://api.gopluslabs.io/api/v1/transaction_simulation";
 
-async function verifiedProposal({ hash, block, amount }) {
+async function verifiedProposal({ hash, block, amount }, expected) {
+  const allowance = BigInt(amount);
+  const matchesLabel = expected === "ALLOW"
+    ? allowance > 0n && allowance <= 1_000_000_000n
+    : expected === "BLOCK" && allowance === MaxUint256;
   const [transaction, receipt] = await Promise.all([
     provider.getTransaction(hash), provider.getTransactionReceipt(hash),
   ]);
-  if (!transaction || receipt?.status !== 1 || receipt.blockNumber !== block || transaction.chainId !== BigInt(fixture.chainId)
-    || !sameAddress(transaction.to, fixture.token) || transaction.value !== 0n || BigInt(amount) <= 0n || BigInt(amount) > 1_000_000_000n
-    || transaction.data !== token.encodeFunctionData("approve", [fixture.spender, amount])) {
+  if (!transaction || receipt?.status !== 1 || receipt.blockNumber !== block || transaction.blockHash !== receipt.blockHash
+    || transaction.chainId !== BigInt(fixture.chainId)
+    || block < fixture.fromBlock || block > fixture.toBlock || !matchesLabel
+    || !sameAddress(transaction.to, fixture.token) || transaction.value !== 0n
+    || transaction.data !== token.encodeFunctionData("approve", [fixture.spender, allowance])) {
     throw new Error(`Unexpected source transaction ${hash}.`);
   }
   const matchesReceipt = receipt.logs.filter((log) => sameAddress(log.address, fixture.token) && log.topics[0] === approvalTopic)
     .map((log) => token.parseLog(log).args).filter(({ owner, spender, value }) =>
-      sameAddress(owner, transaction.from) && sameAddress(spender, fixture.spender) && value === BigInt(amount));
+      sameAddress(owner, transaction.from) && sameAddress(spender, fixture.spender) && value === allowance);
   if (matchesReceipt.length !== 1) throw new Error(`Missing unique approval event for ${hash}.`);
   return { chainId: fixture.chainId, from: transaction.from, to: transaction.to, value: "0", data: transaction.data };
 }
@@ -62,36 +68,41 @@ async function scanWithGoPlus(proposal, amount) {
   }
 }
 
+const started = new Date();
 try {
   if ((await provider.getNetwork()).chainId !== BigInt(fixture.chainId)) throw new Error("Benchmark RPC is on the wrong network.");
-  const cases = [];
+  const groups = [];
   const owners = new Set();
-  for (const item of fixture.cases) {
-    const proposal = await verifiedProposal(item);
-    const sender = proposal.from.toLowerCase();
-    if (owners.has(sender)) throw new Error(`Duplicate sender for ${item.hash}.`);
-    owners.add(sender);
-    const verdict = evaluatePolicy(proposal, { ...policy, agentWallet: sender }, {
-      market: { source: "USDC unit valuation for bounded approval controls", usdMicros: { [fixture.token.toLowerCase()]: "1000000" } },
-    });
-    cases.push({ ...item, expected: fixture.expected,
-      proofGuard: { decision: verdict.passed ? "ALLOW" : "BLOCK", blockers: verdict.blockers },
-      goPlus: await scanWithGoPlus(proposal, item.amount) });
+  for (const { id, expected, labelReason, cases: samples } of fixture.groups) {
+    const cases = [];
+    for (const item of samples) {
+      const proposal = await verifiedProposal(item, expected);
+      const sender = proposal.from.toLowerCase();
+      if (owners.has(sender)) throw new Error(`Duplicate sender for ${item.hash}.`);
+      owners.add(sender);
+      const verdict = evaluatePolicy(proposal, { ...policy, agentWallet: sender }, {
+        market: { source: "USDC unit valuation for approval controls", usdMicros: { [fixture.token.toLowerCase()]: "1000000" } },
+      });
+      cases.push({ ...item,
+        proofGuard: { decision: verdict.passed ? "ALLOW" : "BLOCK", blockers: verdict.blockers },
+        goPlus: await scanWithGoPlus(proposal, item.amount) });
+    }
+    const blocked = cases.filter(({ proofGuard }) => proofGuard.decision === "BLOCK").length;
+    const conclusive = cases.filter(({ goPlus }) => goPlus.decision !== "INCONCLUSIVE").length;
+    const flagged = cases.filter(({ goPlus }) => goPlus.decision === "FLAG").length;
+    groups.push({ id, expected, labelReason, sampleSize: cases.length,
+      proofGuard: { blocked, [expected === "BLOCK" ? "recall" : "falsePositiveRate"]: blocked / cases.length },
+      goPlus: { simulatedWithMatchingAllowance: conclusive, flagged, inconclusive: cases.length - conclusive,
+        flagRateAmongConclusive: conclusive ? flagged / conclusive : null },
+      cases });
   }
-  const proofGuardBlocked = cases.filter(({ proofGuard }) => proofGuard.decision === "BLOCK").length;
-  const goPlusConclusive = cases.filter(({ goPlus }) => goPlus.decision !== "INCONCLUSIVE").length;
-  const goPlusFlagged = cases.filter(({ goPlus }) => goPlus.decision === "FLAG").length;
   console.log(JSON.stringify({
-    scope: "Base mainnet bounded USDC approval controls; GoPlus simulates current state; no 0G requests or broadcasts",
+    scope: "Base mainnet bounded and unlimited USDC approval controls. GoPlus simulates current state and reports public risk flags. ProofGuard applies its local owner policy. No 0G requests or broadcasts.",
     revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
     workingTreeModified: Boolean(execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim()),
     fixtureSha256: createHash("sha256").update(fixtureFile).digest("hex"),
-    measuredAt: new Date().toISOString(),
-    sampleSize: cases.length,
-    proofGuard: { blocked: proofGuardBlocked, falsePositiveRate: proofGuardBlocked / cases.length },
-    goPlus: { simulatedWithMatchingAllowance: goPlusConclusive, flagged: goPlusFlagged,
-      flagRateAmongConclusive: goPlusConclusive ? goPlusFlagged / goPlusConclusive : null },
-    cases,
+    measuredAt: started.toISOString(), elapsedMs: Date.now() - started.getTime(),
+    sampleSize: owners.size, groups,
   }, null, 2));
 } finally {
   provider.destroy();
