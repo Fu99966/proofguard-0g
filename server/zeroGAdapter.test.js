@@ -1,9 +1,18 @@
-import { describe, expect, it } from "vitest";
-import { combineCommitteeVerdicts, extractJson, getZeroGConfig, getZeroGMode } from "./zeroGAdapter.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { combineCommitteeVerdicts, extractJson, getZeroGConfig, reviewWithZeroG } from "./zeroGAdapter.js";
 
 describe("0G adapter", () => {
+  beforeEach(() => {
+    for (const name of ["API_KEY", "FORCE_DEMO", "BASE_URL", "MODEL", "CRITIC_MODEL", "TRUST_MODE", "ENABLE_COMMITTEE"]) {
+      vi.stubEnv(`ZERO_G_${name}`, undefined);
+    }
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
   it("runs in explicitly labelled demo mode without a key", () => {
-    expect(getZeroGMode()).toBe(process.env.ZERO_G_API_KEY ? "live" : "demo");
+    expect(getZeroGConfig().mode).toBe("demo");
   });
 
   it("extracts JSON from model thinking and markdown fences", () => {
@@ -11,14 +20,27 @@ describe("0G adapter", () => {
     expect(result).toEqual({ decision: "ALLOW", riskScore: 8 });
   });
 
-  it("fails closed when a model response has no JSON", () => {
-    expect(() => extractJson("Looks safe to me")).toThrow(/no JSON decision/);
+  it("accepts only the final JSON after the SIA reasoning delimiter", () => {
+    const answer = '{"decision":"BLOCK","riskScore":90}';
+    const sia = { allowBareThinkEnd: true };
+    const intermediate = '{"decision":"ALLOW","riskScore":1}';
+    expect(extractJson(`Thinking about ${intermediate}. </think>\n${answer}`, sia)).toEqual({
+      decision: "BLOCK", riskScore: 90,
+    });
+    expect(() => extractJson(`Unmarked lead-in. ${answer}`, sia)).toThrow();
+    expect(() => extractJson(`Reasoning. </think> ${answer} ${answer}`, sia)).toThrow();
+    expect(() => extractJson(`Reasoning. </think> ${answer}`)).toThrow();
   });
 
-  it("configures the sponsor-native two-model committee by default", () => {
-    const config = getZeroGConfig();
-    expect(config.models).toContain("0GM-1.0-35B-A3B");
-    expect(config.models).toContain("0GM-1.0-35B-A3B-SIA");
+  it("fails closed when a model response has no JSON", () => {
+    expect(() => extractJson("Looks safe to me")).toThrow();
+  });
+
+  it("configures the verified pair by default in both demo and live modes", () => {
+    const expected = ["glm-5.3-flash", "0gm-1.0-35b-a3b-sia"];
+    expect(getZeroGConfig()).toMatchObject({ mode: "demo", models: expected });
+    vi.stubEnv("ZERO_G_API_KEY", "synthetic-key");
+    expect(getZeroGConfig()).toMatchObject({ mode: "live", models: expected, trustMode: "private" });
   });
 
   it("fails closed when either committee reviewer blocks", () => {
@@ -32,6 +54,18 @@ describe("0G adapter", () => {
     expect(combined.riskScore).toBe(81);
     expect(combined.models).toEqual(["0GM", "0GM-SIA"]);
     expect(combined.receipt.verified).toBe(true);
+  });
+
+  it("does not call the Router in force-demo mode even when a key is configured", async () => {
+    vi.stubEnv("ZERO_G_API_KEY", "synthetic-key");
+    vi.stubEnv("ZERO_G_FORCE_DEMO", "true");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await reviewWithZeroG({ deterministic: { passed: true, checks: [] } });
+    expect(result).toMatchObject({ decision: "ALLOW", mode: "demo", receipt: { verification: "simulation", verified: false } });
+    expect(result.committee).toHaveLength(2);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

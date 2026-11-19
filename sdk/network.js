@@ -1,0 +1,9 @@
+export const baseSepolia = Object.freeze({
+  chainId: 84532,
+  usdc: "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+  weth: "0x4200000000000000000000000000000000000006",
+  permit2: "0x000000000022d473030f116ddee9f6b43ac78ba3",
+  ethUsdFeed: "0x4adc67696ba383f43dd60a9e78f2c97fbbfc7cb1",
+  quoterV3: "0xc5290058841028f1614f3a6f0f5816cad0df5e27",
+  router: "0x492e6456d9528771018deb9e87ef7750ef184104",
+});

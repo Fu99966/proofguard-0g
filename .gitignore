@@ -6,3 +6,10 @@ dist/
 output/
 .playwright-cli/
 
+
+graphify-out/
+var/
+eval/report.json
+eval/report.md
+contracts/cache/
+contracts/out/

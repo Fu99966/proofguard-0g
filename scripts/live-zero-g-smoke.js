@@ -1,35 +1,48 @@
 import "dotenv/config";
-import { policy, scenarios } from "../server/demoData.js";
-import { evaluatePolicy } from "../server/policyEngine.js";
+import { demoMarket, policy, scenarios } from "../server/demoData.js";
+import { evaluatePolicy, issuePermit, stableHash } from "../server/policyEngine.js";
 import { getZeroGConfig, reviewWithZeroG } from "../server/zeroGAdapter.js";
 
 const config = getZeroGConfig();
 if (config.mode !== "live") {
-  console.error("ZERO_G_API_KEY is missing. Add it to .env before running the live 0G smoke test.");
+  console.error("Live smoke requires a local 0G key, the official Router, private mode, and two distinct reviewer models. Disable force-demo for this run.");
   process.exit(1);
 }
 
-const scenario = scenarios.find((item) => item.id === "safe-swap");
-const deterministic = evaluatePolicy(scenario.transaction, policy);
+for (const [id, expected] of [["safe-swap", "ALLOW"], ["prompt-injection", "BLOCK"]]) {
+  const { transaction } = scenarios.find(({ id: scenarioId }) => scenarioId === id);
+  try {
+    const deterministic = evaluatePolicy(transaction, policy, { market: demoMarket });
+    const inference = await reviewWithZeroG({ transaction, policy, deterministic });
+    const decision = issuePermit({ transaction, policy, inference, deterministic }) ? "ALLOW" : "BLOCK";
+    const responseContent = JSON.parse(inference.rawDecision);
+    const committee = inference.committee.map((reviewer) => ({
+      role: reviewer.role,
+      model: reviewer.model,
+      decision: reviewer.decision,
+      requestId: reviewer.receipt.requestId,
+      responseId: reviewer.receipt.responseId,
+      provider: reviewer.receipt.provider,
+      chatId: reviewer.receipt.chatId,
+      verification: reviewer.receipt.verification,
+      responseContent: responseContent[reviewer.role],
+    }));
+    console.log(JSON.stringify({
+      scenario: id,
+      expected,
+      decision,
+      committee,
+      responseCommitment: stableHash(inference.rawDecision),
+      routerVerified: inference.receipt.verified,
+      independentVerification: "not performed",
+    }, null, 2));
 
-console.log(`Calling ${config.models.join(" + ")} through 0G Private Computer...`);
-const inference = await reviewWithZeroG({ transaction: scenario.transaction, policy, deterministic });
-
-console.log(JSON.stringify({
-  mode: inference.mode,
-  decision: inference.decision,
-  models: inference.models,
-  trustMode: inference.trustMode,
-  latencyMs: inference.latencyMs,
-  usage: inference.usage,
-  committee: inference.committee.map((reviewer) => ({
-    role: reviewer.role,
-    model: reviewer.model,
-    decision: reviewer.decision,
-    responseId: reviewer.receipt.responseId,
-    attestationReturned: reviewer.receipt.verified,
-    receiptLabel: reviewer.receipt.label,
-  })),
-  committeeReceipt: inference.receipt.label,
-}, null, 2));
-
+    if (decision !== expected || !inference.receipt.verified || committee.some(({ requestId, provider, chatId }) => !requestId || !provider || !chatId)
+      || committee[0].requestId === committee[1].requestId) {
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    console.error(`${id}: ${error.message}`);
+    process.exitCode = 1;
+  }
+}

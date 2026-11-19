@@ -6,7 +6,7 @@
 
 1. 在 0G Private Computer 创建并充值 API key。
 2. `.env` 配置 `ZERO_G_API_KEY`，启动 `npm run dev`。
-3. 打开 `http://localhost:5173`，确认右上角显示 `LIVE 0G`。
+3. 打开 `http://localhost:5173`，确认右上角显示 `LIVE 0G CONFIGURED`。
 4. 预先连接 MetaMask；若不展示钱包签名，可跳过该步骤。
 5. 刷新页面，选择“正常换仓”。
 6. 准备 GitHub README 页面作为结尾备用镜头。
@@ -15,7 +15,7 @@
 
 ### 00:00–00:15｜问题钩子
 
-**画面：** ProofGuard 首页全景，鼠标停在标题和 `PROTECTED VALUE`。
+**画面：** ProofGuard 首页全景，鼠标停在标题和 `DEMO TREASURY`。
 
 **旁白：**
 
@@ -27,7 +27,7 @@
 
 **旁白：**
 
-> 每笔交易在广播前都有三张安全票：0G 自研模型 0GM 负责语义主审，0GM-SIA 负责独立红队复核，Owner Policy 执行不可协商的硬边界。三票一致，才会签发 Execution Permit。
+> 每笔交易在广播前都有三张安全票：GLM-5.3-Flash 负责语义主审，0GM-SIA 负责独立红队复核，Owner Policy 执行不可协商的硬边界。三票一致，才会签发 Execution Permit。
 
 ### 00:30–01:05｜正常交易通过
 
@@ -35,7 +35,7 @@
 
 **旁白：**
 
-> 这是 Treasury Agent 提议的一笔正常换仓：在 Base 上将 2,400 USDC 换为 WETH。敏感意图通过官方 0G Router，并行发送给 0GM-1.0-35B-A3B 和 0GM-1.0-35B-A3B-SIA，强制使用 Private 模式。一个理解交易语义，一个专门寻找否决理由；同时，策略引擎检查网络、合约、金额、资产、滑点和授权。
+> 这是 Treasury Agent 提议的一笔正常换仓：在 Base 上将 2,400 USDC 换为 WETH。敏感意图通过官方 0G Router，并行发送给 glm-5.3-flash 和 0GM-1.0-35B-A3B-SIA，强制使用 Private 模式。一个理解交易语义，一个专门寻找否决理由；同时，策略引擎检查网络、合约、金额、资产、滑点和授权。
 
 **画面结果：** `EXECUTION PERMIT ISSUED`。
 
@@ -79,7 +79,7 @@
 
 **旁白：**
 
-> 每次审查都会生成三份独立承诺：交易、Owner Policy 和双模型委员会响应。Live 模式还原样保存两个 0G response ID 与 attestation 元数据，不伪造任何 Proof ID。
+> 每次审查都会生成三份独立承诺：交易、Owner Policy 和双模型委员会响应。Live 模式保存两份 Router 请求标识和 TEE 验证结果，便于与官方用量记录核对。独立验签单独核验。
 
 ### 02:35–02:50｜收尾
 
@@ -92,7 +92,7 @@
 ## 视频字幕关键词
 
 - 0G Private Computer
-- `0GM-1.0-35B-A3B`
+- `glm-5.3-flash`
 - `0GM-1.0-35B-A3B-SIA`
 - 2-model committee / unanimous vote
 - Private / TeeML
@@ -105,7 +105,7 @@
 ## 剪辑建议
 
 - 审查动画保留 1.5–2 倍速，不要整段跳过。
-- 攻击 memo、`LIVE 0G`、Permit hash 和 `COMMITMENT MISMATCH` 分别做一次局部放大。
+- 攻击 memo、`LIVE 0G CONFIGURED`、Permit hash 和 `COMMITMENT MISMATCH` 分别做一次局部放大。
 - 屏幕角落常驻项目名和一句话：`A verifiable AI firewall for onchain agents.`
 - 不使用夸张转场；以点击声、扫描声和 Permit 盖章声强化安全控制台氛围。
 

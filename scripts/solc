@@ -1,0 +1,10 @@
+#!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import solc from "solc";
+
+if (process.argv.includes("--version")) process.stdout.write(`Version: ${solc.version()}\n`);
+else if (process.argv.includes("--standard-json")) process.stdout.write(solc.compile(readFileSync(0, "utf8")));
+else {
+  process.stderr.write("Expected --version or --standard-json\n");
+  process.exitCode = 1;
+}
