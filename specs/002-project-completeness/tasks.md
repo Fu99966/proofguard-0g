@@ -77,3 +77,14 @@ The [swap fixture](../../eval/cases/base-usdc-weth-swaps.json) pins 30 direct Ba
 | Canonical outer ABI envelope | 0/30. All 30 had a canonical prefix followed by additional data. Thirteen had 10 extra bytes and seventeen had 22. |
 
 The source fixture SHA-256 is `002c1b6300976cf1b4cddf17dc916a8cd193516d79e056ec4ae694ae7cb0575c`. These results measure current decoder compatibility in the sampled deployment and pool set. A policy-level `ALLOW` label requires the benchmark mandate and price evidence at execution time. The sample gives no estimate of broad swap false-positive rates. This read-only evaluation did not invoke models or submit transactions.
+
+### Historical quote and price verification
+
+Run `node eval/base-swap-coverage.js --pricing` to price the same pinned receipts at the immediately preceding Base block. The verifier checks each original V3 command's path and amount bounds against the receipt. It records [QuoterV2](https://developers.uniswap.org/docs/protocols/v3/deployments/v3-base-deployments) exact-input or exact-output terms, the parent block hash, and the [Chainlink](https://docs.chain.link/data-feeds/historical-data) ETH/USD and USDC/USD feed rounds. It uses the parent block's timestamp, with maximum feed ages of one hour for ETH/USD and 25 hours for USDC/USD. For one-hop V2.1.x commands the calculation incorporates any [per-hop minimum price](https://github.com/Uniswap/universal-router/blob/802fe4c/contracts/modules/uniswap/v3/V3SwapRouter.sol). All 22 V2.1.2 samples had this protection disabled.
+
+| Router in sample | Maximum adverse slippage permitted by calldata | Quote deviation from Chainlink values | Within benchmark limits |
+| --- | --- | --- | --- |
+| V2, 8 swaps | 25–27 bps | 1–17 bps | 8/8 |
+| V2.1.2, 22 swaps | 240–253 bps | 1–21 bps | 0/22 |
+
+The 2026-11-19 run at 04:28 UTC had zero inconclusive prices. All 30 parent-block quotes could satisfy the encoded amount bounds and met the USD 10,000 value cap and the 300 bps price-deviation limit. Twenty-two exceeded the 75 bps slippage tolerance, based on the maximum adverse slippage the submitted bounds permit. The calculation uses parent-block state and describes transaction limits. Full policy labeling still requires an applicable owner mandate and independently verified treatment of the envelope and other effects. Router registration and live acceptance were unchanged.

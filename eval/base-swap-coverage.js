@@ -5,6 +5,7 @@ import { Contract, Interface, ZeroAddress, zeroPadValue } from "ethers";
 import { decodeTransaction } from "../server/decoder.js";
 import { policy } from "../server/demoData.js";
 import { rpcProvider } from "../server/market.js";
+import { historicalSwapPricer, pricingLimits } from "./base-swap-pricing.js";
 
 const fixtureFile = await readFile(new URL("./cases/base-usdc-weth-swaps.json", import.meta.url), "utf8");
 const fixture = JSON.parse(fixtureFile);
@@ -90,8 +91,7 @@ async function discover(pools) {
   return selected;
 }
 
-function compare(observed, proposal) {
-  const call = routerAbi.parseTransaction({ data: proposal.data });
+function compare(observed, proposal, call) {
   const encoded = call && routerAbi.encodeFunctionData(call.fragment, call.args).toLowerCase();
   const data = proposal.data.toLowerCase();
   const trailingBytes = encoded && data.startsWith(encoded) ? (data.length - encoded.length) / 2 : null;
@@ -119,6 +119,8 @@ try {
     console.log(JSON.stringify(await discover(pools), null, 2));
   } else {
     if (fixture.cases.length !== sampleSize) throw new Error("Expected 30 pinned swaps.");
+    const priceAtParent = process.argv.includes("--pricing") ? historicalSwapPricer(provider, fixture.assets) : null;
+    const feesByPool = new Map(poolAddresses.map((address, index) => [address, fixture.fees[index]]));
     const cases = [];
     const senders = new Map();
     const hashes = new Set();
@@ -133,8 +135,15 @@ try {
       const count = senders.get(from) ?? 0;
       if (count === maximumPerSender) throw new Error(`Sample exceeds the per-sender cap at ${sample.hash}.`);
       senders.set(from, count + 1);
-      cases.push(compare(result.observed, result.proposal));
+      const call = routerAbi.parseTransaction({ data: result.proposal.data });
+      const evidence = compare(result.observed, result.proposal, call);
+      if (priceAtParent) evidence.pricing = await priceAtParent(evidence, call, feesByPool.get(evidence.pool));
+      cases.push(evidence);
     }
+    const pricing = priceAtParent && { limits: pricingLimits,
+      withinLimits: cases.filter((entry) => entry.pricing.status === "within-limits").length,
+      outsideLimits: cases.filter((entry) => entry.pricing.status === "outside-limits").length,
+      inconclusive: cases.filter((entry) => entry.pricing.status === "inconclusive").length };
     console.log(JSON.stringify({ scope: "Mined direct USDC/WETH swap coverage on Base",
       revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
       workingTreeModified: Boolean(execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim()),
@@ -144,7 +153,7 @@ try {
       registered: cases.filter(({ registered }) => registered).length,
       canonical: cases.filter(({ trailingBytes }) => trailingBytes === 0).length,
       canonicalPrefixWithSuffix: cases.filter(({ trailingBytes }) => trailingBytes > 0).length,
-      effectsMatched: cases.filter(({ effectsMatched }) => effectsMatched).length, cases }, null, 2));
+      effectsMatched: cases.filter(({ effectsMatched }) => effectsMatched).length, ...(pricing && { pricing }), cases }, null, 2));
   }
 } finally {
   provider.destroy();
