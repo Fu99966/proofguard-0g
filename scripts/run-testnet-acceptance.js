@@ -11,6 +11,7 @@ import { createProofGuardClient } from "../sdk/index.js";
 import { baseSepolia } from "../sdk/network.js";
 import { createApp } from "../server/index.js";
 import { chainlinkMarket, rpcProvider } from "../server/market.js";
+import { readRouterRequestsUsed } from "../server/reviewStore.js";
 import { getZeroGConfig } from "../server/zeroGAdapter.js";
 import { verifyAgentRun } from "../examples/rebalancer/verify-run.js";
 
@@ -28,6 +29,10 @@ const provider = rpcProvider(rpc);
 const owner = new Wallet(keys.owner, provider);
 const agent = new Wallet(keys.agent, provider);
 const issuer = new Wallet(keys.issuer);
+const database = join(directory, "reviews.sqlite");
+const routerBudgetId = `base-sepolia-acceptance:${owner.address}`;
+// A fresh passing run needs one reviewed rebalance and one reviewed recipient rejection.
+const minimumRouterRequests = 2 * getZeroGConfig().models.length;
 const token = new Contract(baseSepolia.usdc, ["function balanceOf(address) view returns(uint256)"], provider);
 
 async function readDeployment() {
@@ -60,9 +65,15 @@ async function runChild(script, args, env) {
 try {
   if ((await provider.getNetwork()).chainId !== BigInt(baseSepolia.chainId)) throw new Error("Acceptance is restricted to Base Sepolia.");
   const [eth, usdc, existing] = await Promise.all([provider.getBalance(owner.address), token.balanceOf(owner.address), readDeployment()]);
+  const routerRequestsUsed = readRouterRequestsUsed(database, routerBudgetId);
+  const routerRequestsRemaining = Math.max(0, routerRequestLimit - routerRequestsUsed);
   console.log(JSON.stringify({ owner: owner.address, ownerTestEth: formatEther(eth), ownerTestUsdc: formatUnits(usdc, 6),
-    safe: existing?.safe ?? null, guard: existing?.guard ?? null, routerRequestLimit }, null, 2));
+    safe: existing?.safe ?? null, guard: existing?.guard ?? null,
+    routerRequestLimit, routerRequestsUsed, routerRequestsRemaining, minimumRouterRequests }, null, 2));
   if (start) {
+    if (routerRequestsRemaining < minimumRouterRequests) {
+      throw new Error(`The acceptance run needs at least ${minimumRouterRequests} Router requests. ${routerRequestsRemaining} remain in the authorized budget.`);
+    }
     process.env.ZERO_G_FORCE_DEMO = "false";
     if (getZeroGConfig().mode !== "live") throw new Error("The private 0G two-model committee must be configured before starting.");
 
@@ -84,8 +95,7 @@ try {
     const journal = join(directory, `observation-${randomBytes(8).toString("hex")}.jsonl`);
     const app = createApp({ owner: owner.address, wallet: deployment.safe, guardAddress: deployment.guard, issuerKey: keys.issuer,
       keyHashes: [createHash("sha256").update(apiKey).digest("hex")], marketFor: chainlinkMarket({ rpc, ethFeed, usdcFeed }),
-      database: join(directory, "reviews.sqlite"), routerBudgetLimit: routerRequestLimit,
-      routerBudgetId: `base-sepolia-acceptance:${owner.address}` });
+      database, routerBudgetLimit: routerRequestLimit, routerBudgetId });
     const server = app.listen(0, "127.0.0.1");
     try {
       await once(server, "listening");

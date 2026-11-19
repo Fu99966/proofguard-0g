@@ -7,6 +7,7 @@ import Database from "better-sqlite3";
 import { Interface, Wallet } from "ethers";
 import { afterEach, expect, it, vi } from "vitest";
 import { createApp } from "./index.js";
+import { readRouterRequestsUsed } from "./reviewStore.js";
 import { baseSepolia } from "../sdk/network.js";
 import { permitTypedData } from "../sdk/permit.js";
 
@@ -105,12 +106,17 @@ it("enforces a Router request cap across application restarts", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "proofguard-budget-test-"));
   folders.push(dir);
   const options = { routerBudgetId: "test-cap", routerBudgetLimit: 2, database: path.join(dir, "db.sqlite") };
+  expect(readRouterRequestsUsed(options.database, options.routerBudgetId)).toBe(0);
   const first = await start(options);
+  expect(readRouterRequestsUsed(options.database, options.routerBudgetId)).toBe(0);
   expect((await post(first.origin, "review", scenario, authorized)).status).toBe(502);
   await close(first.server);
+  expect(readRouterRequestsUsed(options.database, options.routerBudgetId)).toBe(2);
+  expect(readRouterRequestsUsed(options.database, "another-scope")).toBe(0);
   const second = await start(options);
   expect((await post(second.origin, "review", scenario, authorized)).status).toBe(429);
   expect(outbound).toBe(2);
+  expect(readRouterRequestsUsed(options.database, options.routerBudgetId)).toBe(2);
 });
 
 it("retains reviewer explanations for a verified veto without persisting raw model output", async () => {

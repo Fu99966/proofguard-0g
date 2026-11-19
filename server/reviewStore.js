@@ -1,6 +1,20 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+
+export function readRouterRequestsUsed(filename, scope) {
+  if (!existsSync(filename)) return 0;
+  const db = new Database(filename, { readonly: true, fileMustExist: true });
+  try {
+    const budgetTable = db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'router_budgets'").get();
+    if (!budgetTable) return 0;
+    const used = db.prepare("SELECT reserved FROM router_budgets WHERE scope = ?").get(scope)?.reserved ?? 0;
+    if (!Number.isSafeInteger(used) || used < 0) throw new Error("The persisted Router budget count is invalid.");
+    return used;
+  } finally {
+    db.close();
+  }
+}
 
 export function openReviewStore(filename) {
   if (filename !== ":memory:") mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 });
