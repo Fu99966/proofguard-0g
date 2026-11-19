@@ -9,7 +9,9 @@
 - [x] T005 Measure deterministic-policy recall and false-positive rate on the repeatable offline dataset (FR-006).
 - [ ] T005A Measure the live committee on independent, labeled cases and compare results with external baselines (FR-006).
 - [x] T006 Build the SDK, custom calldata UI and full Base Sepolia trading Agent (FR-004, operator choice B).
-- [ ] T007 Observe 24 continuous hours of public Base Sepolia testing, including at least one normal rebalance and a rejected invalid recipient. Match every submitted action to a ProofGuard receipt (FR-004).
+- [ ] T007A Prove atomic worst-case reservations offline, then run and report the six ordered two-hour live checks on Base Sepolia (FR-007).
+- [ ] T007B Complete 24 hours of signerless sampling and report continuity, RPC and quote recovery, and memory (FR-008).
+- [ ] T007C Add at least five verified Base Sepolia swaps to the internal evaluation sources (FR-008).
 - [x] T008 Implement and verify the Safe Guard, restricted role, typed issuer and balance simulation on a local Base Sepolia fork (FR-005).
 - [x] T008A Deploy an isolated public Base Sepolia Safe and check that a transaction missing a valid permit reverts there (FR-005).
 - [ ] T009 Obtain an independent contract audit before any mainnet release (FR-005).

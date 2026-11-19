@@ -1,5 +1,7 @@
 # Implementation plan
 
+The operator closed the short-run ledger at 16 of 18 requests and replaced the 24-hour live gate. A separate two-hour live run reserves both model requests before transmission, using enforced price and maximum token bounds. Unmatched reservations remain committed and missing or inconsistent billing stops the run. Log each drill and pin the code revision. Use an independently launched, signerless Base Sepolia sampler for the 24-hour run. Schedule it against absolute time, include the planned fault slots in continuity, and track recovery and memory separately.
+
 The operator approved one Base Sepolia short run with three ordered dual reviews and a cumulative cap of 18. Pin the clean local commit before opening the Router path. Plan the exact renewal, swap and zero-value invalid-recipient proposal using a fresh read-only quote. The Permit2 renewal applies only to the registered testnet router and exactly the planned input, with at least 48 hours remaining at confirmation. Preserve the ordinary approval duration policy outside the scoped short endpoint. Stop at the first failed step and record the final outcome independently of later acceptance work.
 
 1. Establish a strict transaction and effect contract and independent policy evidence. Keep demo market data explicitly separate from generic live proposals. Decode supported deployed router ABIs by chain and address. Bound all approvals, costs and receivers with exact integer arithmetic.

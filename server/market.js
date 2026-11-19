@@ -28,9 +28,8 @@ export function rpcProvider(url) {
   return new JsonRpcProvider(request);
 }
 
-export function chainlinkMarket({ rpc, ethFeed = baseSepolia.ethUsdFeed, usdcFeed, now = Date.now, maxAgeSeconds = 3600 }) {
-  if (!rpc || !ethFeed) return async () => null;
-  const provider = rpcProvider(rpc);
+export function chainlinkMarket({ rpc, provider = rpc && rpcProvider(rpc), ethFeed = baseSepolia.ethUsdFeed, usdcFeed, now = Date.now, maxAgeSeconds = 3600 }) {
+  if (!provider || !ethFeed) return async () => null;
   const eth = new Contract(getAddress(ethFeed), feedAbi, provider);
   const usdc = usdcFeed ? new Contract(getAddress(usdcFeed), feedAbi, provider) : null;
   const quoter = new Contract(baseSepolia.quoterV3, quoterAbi, provider);
