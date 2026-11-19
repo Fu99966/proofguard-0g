@@ -49,6 +49,8 @@ export async function verifyAgentRun(entries, { provider, readAudit }) {
   const ticks = [start, ...positions, finish].map(({ at }) => Date.parse(at));
   requireEvidence(positions.length > 0 && ticks.every((at, index) => Number.isFinite(at)
     && (index === 0 || (at >= ticks[index - 1] && at - ticks[index - 1] <= maxJournalGapMs))), "The Agent journal has an observation gap.");
+  requireEvidence(!entries.some(({ event, reason }) => event === "run-submissions-paused" && reason === "three-consecutive-review-cycles"),
+    "Agent submissions paused because three consecutive cycles triggered review.");
 
   const submitted = entries.filter(({ event }) => event === "submitted");
   const confirmed = entries.filter(({ event }) => event === "confirmed");
@@ -84,5 +86,6 @@ export async function verifyAgentRun(entries, { provider, readAudit }) {
     && Date.parse(rejections[0].at) >= ticks[0] && Date.parse(rejections[0].at) <= ticks.at(-1),
   "The run does not prove a verified recipient rejection within the observation window.");
   return { runId: start.runId, startBlock: opening.block.number, endBlock: closing.block.number,
-    elapsedOnChainSeconds: closing.block.timestamp - opening.block.timestamp, observations: positions.length, guardedTransactions: submitted.length, swaps, recipientRejections: rejections.length };
+    elapsedOnChainSeconds: closing.block.timestamp - opening.block.timestamp, observations: positions.length, guardedTransactions: submitted.length,
+    swaps, recipientRejections: rejections.length, renewalAnomalies: entries.filter(({ event }) => event === "allowance-renewal-anomaly").length };
 }

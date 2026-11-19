@@ -8,7 +8,7 @@ import { chainlinkMarket, rpcProvider } from "../../server/market.js";
 import { createProofGuardClient } from "../../sdk/index.js";
 import { guardedSafeSigner } from "../../sdk/guard.js";
 import { baseSepolia } from "../../sdk/network.js";
-import { rebalance } from "./strategy.js";
+import { allowanceRenewals, rebalance, reviewCycleStatus } from "./strategy.js";
 import { checkRecipientRejection } from "./rejection.js";
 import { minimumRenewalSeconds } from "./short-acceptance.js";
 
@@ -52,6 +52,8 @@ const issuer = live ? await guard.issuer() : null;
 const agent = signer?.address ?? null;
 let submissionsPaused = false;
 let rejectionRecorded = false;
+let reviewAttemptsInCycle = 0;
+let consecutiveReviewCycles = 0;
 await mkdir(path.dirname(journal), { recursive: true, mode: 0o700 });
 
 async function record(entry) {
@@ -86,6 +88,7 @@ async function simulate(signedCall, expected) {
 
 async function submit(tx, expected) {
   let signedCall;
+  reviewAttemptsInCycle += 1;
   return client.guardedSend(tx, async ({ result }) => {
     const sent = await signer.sendTransaction({ to: guardAddress, data: signedCall, chainId: baseSepolia.chainId });
     await record({ event: "submitted", txHash: sent.hash, permitHash: result.permit.permitHash, target: tx.to });
@@ -109,14 +112,23 @@ async function submit(tx, expected) {
 }
 
 async function ensureAllowance(trade) {
-  const allowance = await token[trade.tokenIn].allowance(safe, baseSepolia.permit2);
-  if (allowance < trade.amount) await submit(proposal(trade.tokenIn, tokenInterface.encodeFunctionData("approve", [baseSepolia.permit2, trade.amount]),
-    "Set the bounded token allowance required for the proposed Base Sepolia rebalance."));
-  const permit = await permit2.allowance(safe, trade.tokenIn, baseSepolia.router);
+  const [allowance, permit] = await Promise.all([token[trade.tokenIn].allowance(safe, baseSepolia.permit2),
+    permit2.allowance(safe, trade.tokenIn, baseSepolia.router)]);
   const now = BigInt(Math.floor(Date.now() / 1000));
-  if (permit.amount >= trade.amount && permit.expiration > now + 300n) return;
-  const data = permit2.interface.encodeFunctionData("approve", [trade.tokenIn, baseSepolia.router, trade.amount, now + 900n]);
-  await submit(proposal(baseSepolia.permit2, data, "Authorize the registered testnet router for this bounded rebalance."));
+  const renewals = allowanceRenewals({ allowance, permit, amount: trade.amount, now });
+  if (!once && renewals.length > 1) {
+    await record({ event: "allowance-renewal-anomaly", requiredRenewals: renewals.length, approvalTypes: renewals, submittedRenewals: 0,
+      tokenIn: trade.tokenIn });
+    return false;
+  }
+  if (renewals.includes("token")) await submit(proposal(trade.tokenIn, tokenInterface.encodeFunctionData("approve", [baseSepolia.permit2, trade.amount]),
+    "Set the bounded token allowance required for the proposed Base Sepolia rebalance."));
+  if (renewals.includes("permit2")) {
+    const expiresAt = BigInt(Math.floor(Date.now() / 1000)) + 900n;
+    const data = permit2.interface.encodeFunctionData("approve", [trade.tokenIn, baseSepolia.router, trade.amount, expiresAt]);
+    await submit(proposal(baseSepolia.permit2, data, "Authorize the registered testnet router for this bounded rebalance."));
+  }
+  return true;
 }
 
 async function tick() {
@@ -151,12 +163,13 @@ async function tick() {
   if (minOut === 0n) throw new Error("The swap cannot provide a nonzero output floor.");
   await record({ event: "quote", tokenIn: trade.tokenIn, tokenOut: trade.tokenOut, amount: trade.amount, minOut, fee: best.fee });
   if (!live || submissionsPaused) return;
-  await ensureAllowance(trade);
+  if (!await ensureAllowance(trade)) return;
   const pathBytes = solidityPacked(["address", "uint24", "address"], [trade.tokenIn, best.fee, trade.tokenOut]);
   const swap = abi.encode(["address", "uint256", "uint256", "bytes", "bool"], [safe, trade.amount, minOut, pathBytes, true]);
   const data = router.encodeFunctionData("execute", ["0x00", [swap], Math.floor(Date.now() / 1000) + 240]);
   await submit(proposal(baseSepolia.router, data, "Rebalance toward 40% ETH exposure under the operator mandate."), { ...trade, minOut });
   if (!once && !rejectionRecorded) {
+    reviewAttemptsInCycle += 1;
     await record(await checkRecipientRejection(client, safe));
     rejectionRecorded = true;
   }
@@ -213,12 +226,25 @@ const durationSeconds = 24 * 60 * 60;
 const startedAtBlockTime = once ? null : await recordBoundary("run-started");
 const end = Date.now() + durationSeconds * 1_000;
 while (true) {
+  reviewAttemptsInCycle = 0;
   try {
     await tick();
   } catch (error) {
-    submissionsPaused ||= error.code === "ROUTER_BUDGET_EXHAUSTED";
-    await record({ event: "halted-tick", issue: submissionsPaused ? "router-budget-exhausted" : "Review, market or submission failed" });
+    if (error.code === "ROUTER_BUDGET_EXHAUSTED") {
+      submissionsPaused = true;
+      await record({ event: "run-submissions-paused", reason: "router-budget-exhausted" });
+    } else {
+      await record({ event: "halted-tick", issue: "Review, market or submission failed" });
+    }
     if (once || (live && !submissionsPaused)) process.exit(1);
+  }
+  if (live && !once && !submissionsPaused) {
+    const cycle = reviewCycleStatus(consecutiveReviewCycles, reviewAttemptsInCycle);
+    consecutiveReviewCycles = cycle.consecutiveCycles;
+    if (cycle.pause) {
+      submissionsPaused = true;
+      await record({ event: "run-submissions-paused", reason: "three-consecutive-review-cycles", classification: "bug", consecutiveReviewCycles });
+    }
   }
   if (once || Date.now() >= end) break;
   await sleep(Math.min(interval, end - Date.now()));

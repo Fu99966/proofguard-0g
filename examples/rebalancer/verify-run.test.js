@@ -68,6 +68,15 @@ it("reconciles a complete 24-hour journal against all Agent nonces and the guard
   await expect(verifyAgentRun(evidence.entries, evidence)).resolves.toMatchObject({ observations: 288, guardedTransactions: 1, swaps: 1, recipientRejections: 1 });
 });
 
+it("reports prevented extra renewals and treats three consecutive review cycles as a failed run", async () => {
+  const evidence = fixture();
+  const { runId, mode } = evidence.entries[0];
+  evidence.entries.splice(-1, 0, { runId, mode, event: "allowance-renewal-anomaly", requiredRenewals: 2, submittedRenewals: 0 });
+  await expect(verifyAgentRun(evidence.entries, evidence)).resolves.toMatchObject({ renewalAnomalies: 1 });
+  evidence.entries.splice(-1, 0, { runId, mode, event: "run-submissions-paused", reason: "three-consecutive-review-cycles" });
+  await expect(verifyAgentRun(evidence.entries, evidence)).rejects.toThrow("three consecutive cycles triggered review");
+});
+
 it("rejects an unjournaled on-chain transaction in the Agent nonce range", async () => {
   const evidence = fixture();
   evidence.blocks[20].nonce = evidence.entries.at(-1).nonce = 6;
