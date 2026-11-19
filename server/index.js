@@ -117,8 +117,13 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
       const response = { decision: permit ? "ALLOW" : "BLOCK", transaction, deterministic, inference, permit, evidence, onchainPermit };
       if (!publicDemo || permit?.owner) store.record(transactionHash, {
         decision: response.decision, deterministic, evidence,
-        reviews: inference.committee.map(({ role, model, decision, receipt }) => ({ role, model, decision,
-          requestId: receipt.requestId ?? null, verification: receipt.verification })),
+        reviews: inference.committee.map(({ role, model, decision, receipt, summary, threats }) => ({
+          role, model, decision, requestId: receipt.requestId ?? null, verification: receipt.verification,
+          ...(response.decision === "BLOCK" && {
+            summary: summary.slice(0, 400),
+            threats: threats.slice(0, 3).map((threat) => threat.slice(0, 160)),
+          }),
+        })),
         permit, onchainPermit: onchainPermit ? { verifyingContract, issuer: issuer.address } : null,
       }, permit, now());
       res.json(response);

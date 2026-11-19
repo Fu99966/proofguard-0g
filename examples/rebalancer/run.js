@@ -137,7 +137,11 @@ async function tick() {
     return outUsd > 0n && delta * 10_000n <= inUsd * 300n;
   });
   const best = plausible.reduce((selected, item) => !selected || item.quoted > selected.quoted ? item : selected, null);
-  if (!best?.quoted) throw new Error("No supported Uniswap V3 pool can quote this order.");
+  if (!best?.quoted) {
+    if (once) throw new Error("No supported Uniswap V3 quote meets the price limit.");
+    await record({ event: "quote-unavailable", blockTag, reason: "No supported quote meets the independent price limit." });
+    return;
+  }
   const minOut = best.quoted * 9975n / 10_000n;
   if (minOut === 0n) throw new Error("The swap cannot provide a nonzero output floor.");
   await record({ event: "quote", tokenIn: trade.tokenIn, tokenOut: trade.tokenOut, amount: trade.amount, minOut, fee: best.fee });

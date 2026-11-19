@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { Wallet } from "ethers";
 import { afterEach, expect, it, vi } from "vitest";
 import { createApp } from "./index.js";
@@ -109,4 +110,44 @@ it("enforces a Router request cap across application restarts", async () => {
   const second = await start(options);
   expect((await post(second.origin, "review", scenario, authorized)).status).toBe(429);
   expect(outbound).toBe(2);
+});
+
+it("retains reviewer explanations for a verified veto without persisting raw model output", async () => {
+  const primary = "glm-5.3-flash";
+  const critic = "0gm-1.0-35b-a3b-sia";
+  vi.stubEnv("ZERO_G_FORCE_DEMO", "false");
+  vi.stubEnv("ZERO_G_API_KEY", "unused-test-router");
+  vi.stubEnv("ZERO_G_MODEL", primary);
+  vi.stubEnv("ZERO_G_CRITIC_MODEL", critic);
+  const realFetch = globalThis.fetch;
+  const privateReasoning = "This text is outside the final JSON verdict.";
+  vi.stubGlobal("fetch", async (url, init) => {
+    if (url !== "https://router-api.0g.ai/v1/chat/completions") return realFetch(url, init);
+    const { model } = JSON.parse(init.body);
+    const verdict = model === critic
+      ? { decision: "BLOCK", summary: "The approval purpose is unclear.", threats: ["Unclear authorization scope"] }
+      : { decision: "ALLOW", summary: "The proposal fits the mandate.", threats: [] };
+    const content = `<think>${privateReasoning}</think>${JSON.stringify({ ...verdict, riskScore: 20, confidence: 0.9 })}`;
+    return Response.json({ model, choices: [{ finish_reason: "stop", message: { content } }],
+      x_0g_trace: { request_id: `fixture-${model}`, tee_verified: true } });
+  });
+  const dir = mkdtempSync(path.join(tmpdir(), "proofguard-veto-test-"));
+  folders.push(dir);
+  const database = path.join(dir, "db.sqlite");
+  const { server, origin } = await start({ database });
+  const response = await post(origin, "review", scenario, authorized);
+  expect(await response.json()).toMatchObject({ decision: "BLOCK", permit: null });
+  await close(server);
+  const db = new Database(database, { readonly: true });
+  try {
+    const { decision_record } = db.prepare("SELECT decision_record FROM reviews").get();
+    expect(JSON.parse(decision_record)).toMatchObject({ decision: "BLOCK", permit: null, reviews: [
+      { role: "primary", decision: "ALLOW", summary: "The proposal fits the mandate." },
+      { role: "critic", decision: "BLOCK", summary: "The approval purpose is unclear.",
+        threats: ["Unclear authorization scope"], verification: "router-verified" },
+    ] });
+    expect(decision_record).not.toContain(privateReasoning);
+  } finally {
+    db.close();
+  }
 });
