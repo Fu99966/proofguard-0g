@@ -7,6 +7,7 @@ import Database from "better-sqlite3";
 import { Interface, Wallet } from "ethers";
 import { afterEach, expect, it, vi } from "vitest";
 import { createApp } from "./index.js";
+import { liveModelBounds, openLiveBudget } from "./liveAcceptanceBudget.js";
 import { readRouterRequestsUsed } from "./reviewStore.js";
 import { baseSepolia } from "../sdk/network.js";
 import { permitTypedData } from "../sdk/permit.js";
@@ -223,4 +224,60 @@ it("retains reviewer explanations for a verified veto without persisting raw mod
   } finally {
     db.close();
   }
+});
+
+it("blocks before Router fetch below the worst-case limit and stops before signing on inconsistent billing", async () => {
+  const models = ["glm-5.3-flash", "0gm-1.0-35b-a3b-sia"];
+  const bounds = liveModelBounds(models);
+  const pair = bounds[0].usdMicros + bounds[1].usdMicros;
+  const directory = mkdtempSync(path.join(tmpdir(), "proofguard-live-budget-test-"));
+  folders.push(directory);
+  const database = path.join(directory, "db.sqlite");
+  const budget = openLiveBudget(database);
+  budget.start("fixture-live", "commit");
+  let limit = pair - 1;
+  let inconsistent = false;
+  let outbound = 0;
+  vi.stubEnv("ZERO_G_FORCE_DEMO", "false");
+  vi.stubEnv("ZERO_G_API_KEY", "unused-test-router");
+  vi.stubEnv("ZERO_G_MODEL", models[0]);
+  vi.stubEnv("ZERO_G_CRITIC_MODEL", models[1]);
+  const realFetch = globalThis.fetch;
+  vi.stubGlobal("fetch", async (url, init) => {
+    if (url !== "https://router-api.0g.ai/v1/chat/completions") return realFetch(url, init);
+    outbound++;
+    const { model, max_tokens } = JSON.parse(init.body);
+    const bound = bounds.find((entry) => entry.model === model);
+    expect(init.headers).toMatchObject(bound.headers);
+    expect(max_tokens).toBe(bound.output);
+    expect(budget.state().committedUsdMicros).toBeGreaterThanOrEqual(bound.usdMicros);
+    return Response.json({ model, usage: { prompt_tokens: 1000, completion_tokens: 100 },
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ decision: "ALLOW", riskScore: 1, summary: "Offline test",
+        threats: [], confidence: 1 }) } }],
+      x_0g_trace: { request_id: `test-${outbound}`, tee_verified: true,
+        billing: { currency: "usd", input_cost: "100", output_cost: "10", total_cost: inconsistent ? "111" : "110" } } });
+  });
+  try {
+    const { server, origin } = await start({ database, wallet: signer.address, issuerKey: signer.privateKey, guardAddress: signer.address,
+      liveAcceptance: { bounds, usdLimit: () => limit }, marketFor: async () => ({ source: "fixture", usdMicros: { [baseSepolia.usdc]: "1000000" } }) });
+    const token = new Interface(["function approve(address spender,uint256 amount)"]);
+    const proposal = { chainId: baseSepolia.chainId, from: signer.address, to: baseSepolia.usdc, value: "0",
+      data: token.encodeFunctionData("approve", [baseSepolia.permit2, 2_000_000]) };
+    const review = (transaction) => post(origin, "review", { transaction }, authorized);
+    expect(await (await review(proposal)).json()).toMatchObject({ code: "ROUTER_BUDGET_EXHAUSTED", permit: null });
+    expect(outbound).toBe(0);
+    limit = 900_000;
+    expect(await (await review(proposal)).json()).toMatchObject({ decision: "ALLOW", onchainPermit: expect.any(Object) });
+    expect(budget.state()).toMatchObject({ billedUsdMicros: 220, unsettled: 0 });
+    await close(server);
+    const restarted = await start({ database, wallet: signer.address, issuerKey: signer.privateKey, guardAddress: signer.address,
+      liveAcceptance: { bounds, usdLimit: () => limit }, marketFor: async () => ({ source: "fixture", usdMicros: { [baseSepolia.usdc]: "1000000" } }) });
+    expect((await post(restarted.origin, "review", { transaction: proposal }, authorized)).status).toBe(409);
+    expect(outbound).toBe(2);
+    inconsistent = true;
+    expect(await (await post(restarted.origin, "review", { transaction: { ...proposal, memo: "new proposal" } }, authorized)).json())
+      .toMatchObject({ code: "LIVE_BUDGET_INTEGRITY", permit: null });
+    expect(outbound).toBe(4);
+    expect(budget.state()).toMatchObject({ billedUsdMicros: 220, unsettled: 2, fault: expect.any(String) });
+  } finally { budget.close(); }
 });

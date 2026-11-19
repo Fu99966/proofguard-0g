@@ -15,6 +15,7 @@ import { chainlinkMarket } from "./market.js";
 import { getZeroGConfig, reviewWithZeroG, ZeroGReviewError } from "./zeroGAdapter.js";
 import { approvalWindowSeconds } from "../examples/rebalancer/short-acceptance.js";
 import { hasVerifiedReviewers } from "../examples/rebalancer/rejection.js";
+import { LiveBudgetError, openLiveBudget } from "./liveAcceptanceBudget.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -25,7 +26,7 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
   frontendOrigins = (process.env.PROOFGUARD_FRONTEND_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean),
   issuerKey = process.env.PROOFGUARD_TESTNET_ISSUER_KEY, guardAddress = process.env.PROOFGUARD_TESTNET_GUARD_ADDRESS,
   routerBudgetLimit = process.env.PROOFGUARD_ROUTER_REQUEST_LIMIT, routerBudgetId = process.env.PROOFGUARD_ROUTER_BUDGET_ID,
-  rateOptions, shortAcceptance, database = process.env.PROOFGUARD_DATABASE_PATH || "var/proofguard.sqlite" } = {}) {
+  rateOptions, shortAcceptance, liveAcceptance, database = process.env.PROOFGUARD_DATABASE_PATH || "var/proofguard.sqlite" } = {}) {
   const policy = { ...demoPolicy, owner: owner ? getAddress(owner) : null };
   const livePolicy = testnetPolicy(policy.owner, wallet ? getAddress(wallet).toLowerCase() : null);
   const shortHashes = shortAcceptance?.transactions.map(stableHash);
@@ -41,7 +42,11 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
   const app = express();
   const { authenticate, throttle } = agentAccess(keyHashes, rateOptions);
   const store = openReviewStore(database);
-  app.locals.closeReviewStore = () => store.close();
+  const liveBudget = liveAcceptance ? openLiveBudget(database) : null;
+  app.locals.closeReviewStore = () => {
+    liveBudget?.close();
+    store.close();
+  };
 
   app.use("/api", (req, res, next) => {
     const origin = req.get("Origin");
@@ -94,6 +99,8 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
 
     const transactionHash = stableHash(transaction);
     const isShort = Boolean(shortAcceptance && !publicDemo);
+    const isLiveAcceptance = Boolean(liveBudget && !publicDemo);
+    let reserved = false;
     if (isShort && (shortHalted || shortReviewActive || shortHashes[shortStep] !== transactionHash)) {
       shortHalted = true;
       return res.status(409).json({ decision: "BLOCK", permit: null, error: "The committed short acceptance is stopped or out of order." });
@@ -127,8 +134,19 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
         res.status(429).json({ error: "Router budget exhausted for this run.", code: "ROUTER_BUDGET_EXHAUSTED", decision: "BLOCK", permit: null });
         return;
       }
-      const inference = await reviewWithZeroG({ transaction, policy: reviewPolicy, deterministic, forceDemo: publicDemo });
-      const verified = !isShort || hasVerifiedReviewers(inference.committee.map(({ role, model, decision, receipt }) => ({
+      let reservation;
+      if (isLiveAcceptance) {
+        if (getZeroGConfig().mode !== "live" || !issuer || !hasTransaction) throw new LiveBudgetError("Only configured live testnet proposals are permitted.");
+        const bounds = liveAcceptance.bounds;
+        if (getZeroGConfig().models.some((model, index) => model !== bounds[index].model)) {
+          throw new LiveBudgetError("Router model configuration changed after preflight.");
+        }
+        liveBudget.reserve(transactionHash, bounds, liveAcceptance.usdLimit());
+        reserved = true;
+        reservation = { bounds, settle: (model, charge) => liveBudget.settle(transactionHash, model, charge) };
+      }
+      const inference = await reviewWithZeroG({ transaction, policy: reviewPolicy, deterministic, forceDemo: publicDemo, reservation });
+      const verified = !(isShort || isLiveAcceptance) || hasVerifiedReviewers(inference.committee.map(({ role, model, decision, receipt }) => ({
         role, model, decision, requestId: receipt.requestId, verification: receipt.verification,
       })));
       const permit = verified ? issuePermit({ transaction, policy: reviewPolicy, inference, deterministic, now: now() }) : null;
@@ -158,7 +176,9 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
       res.json(response);
     } catch (error) {
       if (isShort) shortHalted = true;
-      if (error instanceof ZeroGReviewError) {
+      const stoppedLive = isLiveAcceptance && (reserved || error.code === "LIVE_BUDGET_INTEGRITY");
+      if (stoppedLive) liveBudget.stop(error.message);
+      if (error instanceof ZeroGReviewError || error instanceof LiveBudgetError) {
         try {
           if (!publicDemo) store.record(transactionHash, {
             decision: "BLOCK", deterministic, policyHash, ...shortEvidence, inferenceError: error.message, permit: null,
@@ -167,7 +187,8 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
           next(storageError);
           return;
         }
-        res.status(error.status).json({ decision: "BLOCK", permit: null, error: error.message });
+        res.status(error.status).json({ decision: "BLOCK", permit: null, error: error.message,
+          ...(stoppedLive ? { code: "LIVE_BUDGET_INTEGRITY" } : error.code && { code: error.code }) });
         return;
       }
       next(error);

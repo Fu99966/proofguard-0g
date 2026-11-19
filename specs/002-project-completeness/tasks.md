@@ -110,3 +110,9 @@ Run `node eval/base-swap-coverage.js --pricing` to price the same pinned receipt
 | V2.1.2, 22 swaps | 240–253 bps | 1–21 bps | 0/22 |
 
 The 2026-11-19 run at 04:28 UTC had zero inconclusive prices. All 30 parent-block quotes could satisfy the encoded amount bounds and met the USD 10,000 value cap and the 300 bps price-deviation limit. Twenty-two exceeded the 75 bps slippage tolerance, based on the maximum adverse slippage the submitted bounds permit. The calculation uses parent-block state and describes transaction limits. Full policy labeling still requires an applicable owner mandate and independently verified treatment of the envelope and other effects. Router registration and live acceptance were unchanged.
+
+## Split acceptance authorized 2026-11-19
+
+The short ledger closed at 16 of 18. Its remaining authorization is zero. The former 24-hour live plan is superseded by T007A and T007B.
+
+The two-hour budget pins two private providers without fallback and sets both USD per-million-token price ceilings. The full advertised input context plus the enforced 4,096-token completion limit reserves 159,335 microdollars for Flash and 30,737 for SIA, totaling 190,072 microdollars before dispatch. An atomic SQLite transaction reserves the pair within 30 requests and 900,000 microdollars. Valid Router billing settles to its exact USD amounts. Unknown costs retain their full reservation and pause the run. Offline tests use the API entry point and a mocked Router to verify both price headers, the maximum output, zero calls below the cap, duplicate rejection after restart and no Permit on a billing mismatch.

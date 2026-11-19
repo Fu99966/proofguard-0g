@@ -33,10 +33,11 @@ export function createProofGuardClient({ apiUrl, apiKey, now = Date.now }) {
     return request(`/api/audit/${permitHash}`);
   }
 
-  async function guardedSend(transaction, submit, { inspect = async () => {}, verifyingContract } = {}) {
+  async function guardedSend(transaction, submit, { inspect = async () => {}, verifyingContract, onReview } = {}) {
     if (transaction.chainId !== baseSepolia.chainId) throw new Error("Guarded submission is limited to Base Sepolia.");
     const snapshot = Object.freeze({ ...transaction });
     const result = await review(snapshot);
+    await onReview?.(result);
     const { permit, inference } = result;
     if (result.decision !== "ALLOW" || !permit || inference?.mode !== "live") throw new Error("ProofGuard did not grant a live permit.");
     const returned = result.transaction;

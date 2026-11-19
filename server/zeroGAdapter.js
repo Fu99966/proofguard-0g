@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { formatUnits } from "ethers";
+import { LiveBudgetError, reviewCompletionTokens, validateLiveCharge } from "./liveAcceptanceBudget.js";
 
 const ROUTER_URL = "https://router-api.0g.ai/v1";
 const DEFAULT_PRIMARY_MODEL = "glm-5.3-flash";
@@ -8,7 +9,7 @@ const DEFAULT_MODELS = [DEFAULT_PRIMARY_MODEL, DEFAULT_CRITIC_MODEL];
 const KNOWN_MODEL_IDS = [...DEFAULT_MODELS, "0gm-1.0-35b-a3b"];
 const TRUST_MODE = "private";
 // The completion budget includes hidden reasoning as well as the final JSON.
-const REVIEW_MAX_TOKENS = 4_096;
+const REVIEW_MAX_TOKENS = reviewCompletionTokens;
 const REVIEW_TIMEOUT_MS = 90_000;
 
 export class ZeroGReviewError extends Error {
@@ -149,7 +150,7 @@ function demoReviewer(deterministic, model, role) {
   };
 }
 
-async function callReviewer({ memo, policy, facts, model, role }) {
+async function callReviewer({ memo, policy, facts, model, role, reservation }) {
   const prompt = buildPrompt(memo, policy, facts, role);
   const startedAt = Date.now();
   let body;
@@ -161,6 +162,7 @@ async function callReviewer({ memo, policy, facts, model, role }) {
         Authorization: `Bearer ${process.env.ZERO_G_API_KEY.trim()}`,
         "Content-Type": "application/json",
         "X-0G-Provider-Trust-Mode": TRUST_MODE,
+        ...reservation?.bound.headers,
       },
       body: JSON.stringify({
         model,
@@ -184,6 +186,12 @@ async function callReviewer({ memo, policy, facts, model, role }) {
   let content;
   try {
     body = await response.json();
+    if (reservation) {
+      const charged = validateLiveCharge(body, reservation.bound);
+      const headerRequestId = response.headers.get("x-request-id");
+      if (headerRequestId && headerRequestId !== charged.id) throw new LiveBudgetError("Router response request IDs disagree.");
+      reservation.settle(model, charged);
+    }
     const choice = body.choices?.[0];
     if (choice?.finish_reason === "length") {
       throw new ZeroGReviewError(`0G ${role} reviewer hit the output limit before completing a verdict.`);
@@ -194,7 +202,7 @@ async function callReviewer({ memo, policy, facts, model, role }) {
     content = choice.message?.content;
     parsed = validateDecision(extractJson(content, { allowBareThinkEnd: model === DEFAULT_CRITIC_MODEL }));
   } catch (error) {
-    if (error instanceof ZeroGReviewError) throw error;
+    if (error instanceof ZeroGReviewError || error instanceof LiveBudgetError) throw error;
     throw new ZeroGReviewError(`0G ${role} returned an invalid or incomplete decision.`);
   }
   const headerEvidence = {};
@@ -287,7 +295,7 @@ export function combineCommitteeVerdicts(reviewers, mode = getZeroGConfig().mode
   };
 }
 
-export async function reviewWithZeroG({ transaction, policy, deterministic, forceDemo = false }) {
+export async function reviewWithZeroG({ transaction, policy, deterministic, forceDemo = false, reservation }) {
   const config = getZeroGConfig();
   const mode = forceDemo ? "demo" : config.mode;
   const { models } = config;
@@ -298,8 +306,12 @@ export async function reviewWithZeroG({ transaction, policy, deterministic, forc
     { model: models[0], role: "primary" },
     { model: models[1], role: "critic" },
   ];
-  const reviewers = mode === "demo"
-    ? specs.map(({ model, role }) => demoReviewer(deterministic, model, role))
-    : await Promise.all(specs.map(({ model, role }) => callReviewer({ memo: transaction.memo, policy, facts: deterministic.facts, model, role })));
-  return combineCommitteeVerdicts(reviewers, mode);
+  if (mode === "demo") return combineCommitteeVerdicts(specs.map(({ model, role }) => demoReviewer(deterministic, model, role)), mode);
+  const reviews = specs.map(({ model, role }, index) => callReviewer({ memo: transaction.memo, policy, facts: deterministic.facts,
+    model, role, ...(reservation && { reservation: { bound: reservation.bounds[index], settle: reservation.settle } }) }));
+  if (!reservation) return combineCommitteeVerdicts(await Promise.all(reviews), mode);
+  const results = await Promise.allSettled(reviews);
+  const failure = results.find(({ status }) => status === "rejected");
+  if (failure) throw failure.reason;
+  return combineCommitteeVerdicts(results.map(({ value }) => value), mode);
 }

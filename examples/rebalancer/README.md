@@ -15,7 +15,7 @@ Use `npm run agent:rebalance` for a single read-only tick with the Base Sepolia 
 
 ## Real testnet run
 
-For the dedicated acceptance wallets, run `node scripts/run-testnet-acceptance.js` to check Base Sepolia balances, deployment state, and the Router request cap. With test ETH and test USDC on chain 84532, run `node scripts/run-testnet-acceptance.js --start` to resume or deploy the Safe, run the Agent and local review API for 24 hours, and verify the journal. The API binds to loopback and persists a total budget of 12 Router requests for this owner across launcher restarts. Build the Foundry contract and configure the private 0G committee first.
+The historic short run is closed at 16 Router requests. Use `node scripts/run-testnet-acceptance.js` for its read-only funding check. The separate approved two-hour run is `node scripts/run-live-acceptance.js`. It uses the existing dedicated Base Sepolia accounts, writes expected and observed outcomes to a new SQLite-backed journal, and enforces 30 paid requests and USD 0.90. The independent 24-hour sampler is `node scripts/observe-testnet-stability.js`. It reads from public RPC, holds no signer, and makes zero Router requests.
 
 Use a dedicated Base Sepolia Safe 1.5.0 with owner keys held separately. Register the deployed ProofGuard contract as the Safe's module, module guard and transaction guard in that order while the account is empty. Configure the Safe as `PROOFGUARD_AGENT_WALLET`. Fund its test inventory with ETH or WETH and USDC (WETH is required for sell orders), and fund the separate agent EOA with testnet ETH for gas. The agent address must have only the module's restricted role. Keep the issuer key on the review server. The `.env.example` file lists the server settings.
 
