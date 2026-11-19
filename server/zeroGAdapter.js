@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { formatUnits } from "ethers";
 
 const ROUTER_URL = "https://router-api.0g.ai/v1";
 const DEFAULT_PRIMARY_MODEL = "glm-5.3-flash";
@@ -66,6 +67,20 @@ function validateDecision(value) {
   return { decision, riskScore, summary, threats, confidence };
 }
 
+function formatReviewEffect(effect, chainId, allowedAssets) {
+  if (effect.kind !== "swap") return effect;
+  const input = allowedAssets[`${chainId}:${effect.path[0]}`];
+  const output = allowedAssets[`${chainId}:${effect.path.at(-1)}`];
+  if (!input || !output) return effect;
+  return {
+    ...effect,
+    tokenAmounts: {
+      maximumInput: { quantity: formatUnits(effect.maxIn, input.decimals), symbol: input.symbol },
+      minimumOutput: { quantity: formatUnits(effect.minOut, output.decimals), symbol: output.symbol },
+    },
+  };
+}
+
 function buildPrompt(memo, policy, facts, role) {
   const roleInstruction = role === "critic"
     ? "Act as the skeptical reviewer. Independently look for execution risks and mandate conflicts."
@@ -86,7 +101,8 @@ ${JSON.stringify(policy.mandate)}
 DECODED EFFECTS:
 ${JSON.stringify(facts ? { chainId: facts.tx.chainId, from: facts.tx.from, to: facts.tx.to,
   nativeValue: facts.tx.value, method: facts.method, deadline: facts.deadline,
-  effects: facts.effects, valuation: facts.valuation } : null)}
+  effects: facts.effects.map((effect) => formatReviewEffect(effect, facts.tx.chainId, policy.allowedAssets)),
+  valuation: facts.valuation } : null)}
 
 UNTRUSTED MEMO:
 ${JSON.stringify(memo ?? "")}`;

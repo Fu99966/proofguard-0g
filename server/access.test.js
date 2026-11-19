@@ -4,9 +4,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { Wallet } from "ethers";
+import { Interface, Wallet } from "ethers";
 import { afterEach, expect, it, vi } from "vitest";
 import { createApp } from "./index.js";
+import { baseSepolia } from "../sdk/network.js";
 import { permitTypedData } from "../sdk/permit.js";
 
 const key = "test-access-0123456789abcdef";
@@ -120,10 +121,12 @@ it("retains reviewer explanations for a verified veto without persisting raw mod
   vi.stubEnv("ZERO_G_MODEL", primary);
   vi.stubEnv("ZERO_G_CRITIC_MODEL", critic);
   const realFetch = globalThis.fetch;
+  const prompts = [];
   const privateReasoning = "This text is outside the final JSON verdict.";
   vi.stubGlobal("fetch", async (url, init) => {
     if (url !== "https://router-api.0g.ai/v1/chat/completions") return realFetch(url, init);
-    const { model } = JSON.parse(init.body);
+    const { model, messages } = JSON.parse(init.body);
+    prompts.push(messages[1].content);
     const verdict = model === critic
       ? { decision: "BLOCK", summary: "The approval purpose is unclear.", threats: ["Unclear authorization scope"] }
       : { decision: "ALLOW", summary: "The proposal fits the mandate.", threats: [] };
@@ -134,9 +137,22 @@ it("retains reviewer explanations for a verified veto without persisting raw mod
   const dir = mkdtempSync(path.join(tmpdir(), "proofguard-veto-test-"));
   folders.push(dir);
   const database = path.join(dir, "db.sqlite");
-  const { server, origin } = await start({ database });
-  const response = await post(origin, "review", scenario, authorized);
+  const { server, origin } = await start({ database, wallet: signer.address, marketFor: async () => ({
+    source: "independent-market-fixture", usdMicros: { [baseSepolia.usdc]: "1000000" },
+    portfolio: { ethExposureBps: 3005, totalUsdMicros: "28571430" },
+  }) });
+  const token = new Interface(["function approve(address spender,uint256 amount)"]);
+  const transaction = { chainId: baseSepolia.chainId, from: signer.address, to: baseSepolia.usdc,
+    value: "0", data: token.encodeFunctionData("approve", [baseSepolia.permit2, 2_843_095]) };
+  const response = await post(origin, "review", { transaction }, authorized);
   expect(await response.json()).toMatchObject({ decision: "BLOCK", permit: null });
+  expect(prompts).toHaveLength(2);
+  for (const prompt of prompts) {
+    expect(prompt).toContain("When verified exposure is outside the band");
+    expect(prompt).toContain("may prepare a corrective swap");
+    expect(prompt).toContain('"ethExposureBps":3005');
+    expect(prompt).toContain('"approvalUsdMicros":"2843095"');
+  }
   await close(server);
   const db = new Database(database, { readonly: true });
   try {
