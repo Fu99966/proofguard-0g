@@ -66,4 +66,14 @@ The [USDC approval fixture](../../eval/cases/base-usdc-approvals.json) pins 20 s
 
 On 2026-11-19 at 04:02 UTC, GoPlus returned all 20 expected allowances in successful simulations. ProofGuard valued USDC at one dollar and GoPlus simulated current chain state. The source fixture SHA-256 was `e3beb3d704839161bab1eb8c66b10ec1c7bb329f19fd901773f81c5b61179f64`. The GoPlus flag counts reflect the vendor's public risk signals. The ProofGuard counts measure enforcement of the benchmark's private spending cap. General performance, the live committee, additional transaction classes, and the Blockaid baseline require additional evidence.
 
-An exploratory Base mainnet scan of blocks `59321683` through `59341682` matched 12 successful USDC/WETH exchanges to reciprocal token transfers between the originating account and an official Uniswap V3 pool. Eleven targeted [Universal Router V2.1.2](https://github.com/Uniswap/universal-router/blob/main/deploy-addresses/base.json), which is absent from the current Base router allowlist. The remaining case targeted the registered V2 router and decoded as a swap. All twelve calldata envelopes differed from canonical ABI re-encoding. The scan measures format and deployment coverage. A mined exchange establishes the observed transfers, with a separate mandate and historical price evidence needed for an `ALLOW` label.
+## Base swap coverage recorded 2026-11-19
+
+The [swap fixture](../../eval/cases/base-usdc-weth-swaps.json) pins 30 direct Base mainnet USDC/WETH exchanges from 20 senders in a fixed scan range of blocks `59181683` through `59341682`, with at most three per sender. Every source is verified against its successful receipt, one [factory-registered V3 pool](https://developers.uniswap.org/docs/protocols/v3/deployments/v3-base-deployments), and the exact reciprocal transfer amounts between that pool and the transaction sender. Run `node eval/base-swap-coverage.js` to reproduce the verification and compare the decoder with receipts. Run it with `--discover` to reproduce selection from the fixed range.
+
+| Compatibility measure | Result |
+| --- | --- |
+| Current Router registry | 8/30 targeted the registered V2 deployment. The other 22 targeted [V2.1.2](https://github.com/Uniswap/universal-router/blob/main/deploy-addresses/base.json). |
+| Decoded input and output agree with the receipt | 8/30. The other 22 failed target registration. |
+| Canonical outer ABI envelope | 0/30. All 30 had a canonical prefix followed by additional data. Thirteen had 10 extra bytes and seventeen had 22. |
+
+The source fixture SHA-256 is `002c1b6300976cf1b4cddf17dc916a8cd193516d79e056ec4ae694ae7cb0575c`. These results measure current decoder compatibility in the sampled deployment and pool set. A policy-level `ALLOW` label requires the benchmark mandate and price evidence at execution time. The sample gives no estimate of broad swap false-positive rates. This read-only evaluation did not invoke models or submit transactions.
