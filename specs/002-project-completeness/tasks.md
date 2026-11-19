@@ -11,7 +11,7 @@
 - [x] T006 Build the SDK, custom calldata UI and full Base Sepolia trading Agent (FR-004, operator choice B).
 - [ ] T007A Prove atomic worst-case reservations offline, then run and report the six ordered two-hour live checks on Base Sepolia (FR-007).
 - [ ] T007B Complete 24 hours of signerless sampling and report continuity, RPC and quote recovery, and memory (FR-008).
-- [ ] T007C Add at least five verified Base Sepolia swaps to the internal evaluation sources (FR-008).
+- [x] T007C Add at least five verified Base Sepolia swaps to the internal evaluation sources (FR-008).
 - [x] T008 Implement and verify the Safe Guard, restricted role, typed issuer and balance simulation on a local Base Sepolia fork (FR-005).
 - [x] T008A Deploy an isolated public Base Sepolia Safe and check that a transaction missing a valid permit reverts there (FR-005).
 - [ ] T009 Obtain an independent contract audit before any mainnet release (FR-005).
@@ -116,3 +116,5 @@ The 2026-11-19 run at 04:28 UTC had zero inconclusive prices. All 30 parent-bloc
 The short ledger closed at 16 of 18. Its remaining authorization is zero. The former 24-hour live plan is superseded by T007A and T007B.
 
 The two-hour budget pins two private providers without fallback and sets both USD per-million-token price ceilings. The full advertised input context plus the enforced 4,096-token completion limit reserves 159,335 microdollars for Flash and 30,737 for SIA, totaling 190,072 microdollars before dispatch. An atomic SQLite transaction reserves the pair within 30 requests and 900,000 microdollars. Valid Router billing settles to its exact USD amounts. Unknown costs retain their full reservation and pause the run. Offline tests use the API entry point and a mocked Router to verify both price headers, the maximum output, zero calls below the cap, duplicate rejection after restart and no Permit on a billing mismatch.
+
+The [pinned Base Sepolia swap sources](../../eval/cases/base-sepolia-usdc-weth-swaps.json) contain six mined swaps from six transaction senders, including the earlier ProofGuard receipt and five independent transactions. Validation reproduces the block hash, successful receipt, factory-registered pool, swap log and exact reciprocal transfer amounts. Run `node eval/base-sepolia-swap-sources.js` for the pinned set or add `--discover` to repeat source selection in the fixed block range. These references have no semantic labels and used no Router calls.
