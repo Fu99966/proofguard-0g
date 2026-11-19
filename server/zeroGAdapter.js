@@ -88,7 +88,7 @@ function formatReviewEffect(effect, chainId, allowedAssets, swapPricing) {
   };
 }
 
-function buildPrompt(memo, policy, facts, role) {
+function buildPrompt(memo, policy, facts, role, portfolioRule) {
   const { swapPricing, ...valuation } = facts?.valuation ?? {};
   const roleInstruction = role === "critic"
     ? "Act as the skeptical reviewer. Independently look for execution risks and mandate conflicts."
@@ -114,7 +114,7 @@ ${JSON.stringify(facts ? { chainId: facts.tx.chainId, from: facts.tx.from, to: f
   valuation: facts.valuation && valuation } : null)}
 
 UNTRUSTED MEMO:
-${JSON.stringify(memo ?? "")}`;
+${JSON.stringify(memo ?? "")}${portfolioRule ? `\n\nDETERMINISTIC PORTFOLIO RULE RESULT:\n${JSON.stringify(portfolioRule)}` : ""}`;
 }
 
 function demoReviewer(deterministic, model, role) {
@@ -150,8 +150,8 @@ function demoReviewer(deterministic, model, role) {
   };
 }
 
-async function callReviewer({ memo, policy, facts, model, role, reservation }) {
-  const prompt = buildPrompt(memo, policy, facts, role);
+async function callReviewer({ memo, policy, facts, model, role, reservation, portfolioRule }) {
+  const prompt = buildPrompt(memo, policy, facts, role, portfolioRule);
   const startedAt = Date.now();
   let body;
   let response;
@@ -293,7 +293,7 @@ export function combineCommitteeVerdicts(reviewers, mode = getZeroGConfig().mode
   };
 }
 
-export async function reviewWithZeroG({ transaction, policy, deterministic, forceDemo = false, reservation }) {
+export async function reviewWithZeroG({ transaction, policy, deterministic, forceDemo = false, reservation, revealPortfolioRule = false }) {
   const config = getZeroGConfig();
   const mode = forceDemo ? "demo" : config.mode;
   const { models } = config;
@@ -305,11 +305,16 @@ export async function reviewWithZeroG({ transaction, policy, deterministic, forc
     { model: models[1], role: "critic" },
   ];
   if (mode === "demo") return combineCommitteeVerdicts(specs.map(({ model, role }) => demoReviewer(deterministic, model, role)), mode);
+  const check = revealPortfolioRule && deterministic.checks.find(({ id }) => id === "portfolio-mandate");
+  const portfolioRule = check ? { decision: check.passed ? "ALLOW" : "BLOCK", reason: check.detail } : undefined;
   const reviews = specs.map(({ model, role }, index) => callReviewer({ memo: transaction.memo, policy, facts: deterministic.facts,
-    model, role, ...(reservation && { reservation: { bound: reservation.bounds[index], settle: reservation.settle } }) }));
+    model, role, portfolioRule, ...(reservation && { reservation: { bound: reservation.bounds[index], settle: reservation.settle } }) }));
   if (!reservation) return combineCommitteeVerdicts(await Promise.all(reviews), mode);
   const results = await Promise.allSettled(reviews);
   const failure = results.find(({ status }) => status === "rejected");
-  if (failure) throw failure.reason;
+  if (failure) {
+    failure.reason.completedReviewers = results.flatMap((entry) => entry.status === "fulfilled" ? [entry.value] : []);
+    throw failure.reason;
+  }
   return combineCommitteeVerdicts(results.map(({ value }) => value), mode);
 }

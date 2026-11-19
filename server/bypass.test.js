@@ -78,6 +78,7 @@ it("separates oracle deviation from quoted execution slippage on Base Sepolia", 
     data: router.encodeFunctionData("execute", ["0x00", [abi.encode(["address", "uint256", "uint256", "bytes", "bool"],
       [safe.from, 1_000_000, minOut, path, true])]]) });
   const market = { source: "testnet-quote-fixture", usdMicros: { [baseSepolia.usdc]: "1000000", [baseSepolia.weth]: "2000000000" },
+    portfolio: { ethExposureBps: 3000, totalUsdMicros: "20000000" },
     swapQuote: { input: "1000000", output: "490000000000000" } };
   expect(evaluatePolicy(make(487_550_000_000_000n), policy, { market })).toMatchObject({ passed: true,
     facts: { valuation: { worstSlippageBps: 50, priceDeviationBps: 200 } } });

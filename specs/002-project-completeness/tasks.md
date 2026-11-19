@@ -8,6 +8,7 @@
 - [x] T004B Verify GitHub Actions on the open draft pull request (FR-003).
 - [x] T005 Measure deterministic-policy recall and false-positive rate on the repeatable offline dataset (FR-006).
 - [ ] T005A Measure the live committee on independent, labeled cases and compare results with external baselines (FR-006).
+- [ ] T005B Verify deterministic portfolio rules offline and report the independent visible-rule and blind dual-model evaluation (FR-009).
 - [x] T006 Build the SDK, custom calldata UI and full Base Sepolia trading Agent (FR-004, operator choice B).
 - [x] T007A Prove atomic worst-case reservations offline, then run and report the six ordered two-hour live checks on Base Sepolia (FR-007).
 - [ ] T007B Complete 24 hours of signerless sampling and report continuity, RPC and quote recovery, and memory (FR-008).

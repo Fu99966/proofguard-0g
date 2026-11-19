@@ -72,7 +72,7 @@ export function chainlinkMarket({ rpc, provider = rpc && rpcProvider(rpc), ethFe
         const stableUsd = stable * BigInt(usdcUsd) / 1_000_000n;
         const total = etherUsd + stableUsd;
         portfolio = { ethExposureBps: total > 0n ? Number(etherUsd * 10_000n / total) : null,
-          totalUsdMicros: total.toString() };
+          ethUsdMicros: etherUsd.toString(), totalUsdMicros: total.toString() };
       }
       return { source: usdc ? "chainlink" : "chainlink-eth-and-testnet-usdc-unit", blockTag, swapQuote, portfolio,
         usdMicros: { [baseSepolia.weth]: ethUsd, native: ethUsd, [baseSepolia.usdc]: usdcUsd } };

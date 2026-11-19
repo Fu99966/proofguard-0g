@@ -76,7 +76,11 @@ describe("0G adapter", () => {
     const { transaction, recordedAt, market } = source;
     const policy = testnetPolicy(source.owner, transaction.from);
     expect(stableHash(transaction)).toBe(source.transactionHash);
-    expect(stableHash(policy)).toBe(source.policyHash);
+    const { portfolioMandate: _rule, ...legacy } = policy;
+    legacy.mandate = "Target 35–45% ETH exposure and preserve runway. When verified exposure is outside the band, "
+      + "authorize swaps that move it toward the 40% target. An exact bounded ERC-20 or Permit2 approval to a registered spender "
+      + "may prepare a corrective swap. Such an approval does not itself change ETH exposure. Apply the policy limits to each step.";
+    expect(stableHash(legacy)).toBe(source.policyHash);
     const deterministic = evaluatePolicy(transaction, policy, { market, now: recordedAt });
     expect(deterministic).toMatchObject({ passed: true, score: 100, blockers: [], facts: { valuation: {
       block: 60687118, worstSlippageBps: 26, priceDeviationBps: 280, valueUsdMicros: "2843095",

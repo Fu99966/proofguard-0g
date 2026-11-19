@@ -23,7 +23,7 @@ export class LiveBudgetError extends Error {
 
 export function liveModelBounds(models, catalog) {
   if (models.length !== 2 || new Set(models).size !== 2 || models.some((model) => !Object.hasOwn(pinned, model))) {
-    throw new LiveBudgetError("The two-hour run requires the two verified price-bounded providers.");
+    throw new LiveBudgetError("Bounded live review requires the two verified price-bounded providers.");
   }
   return models.map((model) => {
     const { address, input, prompt, completion } = pinned[model];

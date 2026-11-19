@@ -38,8 +38,10 @@ export const policy = Object.freeze({
 export function testnetPolicy(owner, wallet) {
   const { chainId: id, router: testRouter, weth: testWeth, usdc: testUsdc, permit2: testPermit2 } = baseSepolia;
   return { ...policy, owner, agentWallet: wallet, allowedChains: [id], maxPriceDeviationBps: 300,
-    mandate: "Target 35–45% ETH exposure and preserve runway. When verified exposure is outside the band, "
-      + "authorize swaps that move it toward the 40% target. An exact bounded ERC-20 or Permit2 approval to a registered spender "
+    portfolioMandate: { lowerBps: 3500, targetBps: 4000, upperBps: 4500, ethAsset: testWeth },
+    mandate: "Target 35–45% ETH exposure and preserve runway. Do not swap while the verified portfolio is within the band, including its boundaries. "
+      + "Outside the band, a swap must move exposure closer to 40% and must not cross the opposite boundary. "
+      + "An exact bounded ERC-20 or Permit2 approval to a registered spender "
       + "may prepare a corrective swap. Such an approval does not itself change ETH exposure. Apply the policy limits to each step.",
     routers: { [`${id}:${testRouter}`]: true }, permit2: { [`${id}:${testPermit2}`]: true },
     allowedSpenders: [testRouter, testPermit2],

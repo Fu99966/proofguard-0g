@@ -42,6 +42,49 @@ function matchesClaims(transaction, derived) {
     && (!Object.hasOwn(transaction, "calldata") || String(transaction.calldata).toLowerCase() === transaction.data.toLowerCase());
 }
 
+const bpsScale = 10_000n;
+const absolute = (integer) => integer < 0n ? -integer : integer;
+
+function portfolioSwapCheck(mandate, portfolio, swap, quotePricing) {
+  const evidence = (passed, reason, projectedExposureBps) => ({ passed, reason, projectedExposureBps });
+  const beforeBps = portfolio?.ethExposureBps;
+  const totalText = portfolio?.totalUsdMicros;
+  const ethText = portfolio?.ethUsdMicros;
+  if (!Number.isInteger(beforeBps) || beforeBps < 0 || beforeBps > 10_000
+    || typeof totalText !== "string" || !/^[1-9]\d{0,35}$/.test(totalText)
+    || (ethText !== undefined && (typeof ethText !== "string" || !/^\d{1,36}$/.test(ethText))) || !swap || !quotePricing) {
+    return evidence(false, "missing-portfolio-or-quote");
+  }
+  const total = BigInt(totalText);
+  const beforeScaled = ethText === undefined ? BigInt(beforeBps) * total : BigInt(ethText) * bpsScale;
+  if (beforeScaled > total * bpsScale || beforeScaled / total !== BigInt(beforeBps)) {
+    return evidence(false, "inconsistent-portfolio");
+  }
+  const inputEth = swap.path[0] === mandate.ethAsset;
+  const outputEth = swap.path.at(-1) === mandate.ethAsset;
+  if (inputEth === outputEth) return evidence(false, "unsupported-exposure-pair");
+  const input = BigInt(quotePricing.quotedInputUsdMicros);
+  const output = BigInt(quotePricing.quotedOutputUsdMicros);
+  if (input * bpsScale > (inputEth ? beforeScaled : total * bpsScale - beforeScaled)) return evidence(false, "insufficient-portfolio-input");
+  const afterScaled = beforeScaled + (outputEth ? output : -input) * bpsScale;
+  const afterTotal = total - input + output;
+  if (afterTotal <= 0n || afterScaled < 0n || afterScaled > afterTotal * bpsScale) return evidence(false, "invalid-projection");
+  const projected = Number(afterScaled / afterTotal);
+  const { lowerBps, targetBps, upperBps } = mandate;
+  const lower = BigInt(lowerBps);
+  const upper = BigInt(upperBps);
+  const target = BigInt(targetBps);
+  const belowBand = beforeScaled < lower * total;
+  if (!belowBand && beforeScaled <= upper * total) return evidence(false, "in-band", projected);
+  if ((belowBand && afterScaled > upper * afterTotal) || (!belowBand && afterScaled < lower * afterTotal)) {
+    return evidence(false, "crosses-opposite-boundary", projected);
+  }
+  if (absolute(afterScaled - target * afterTotal) * total >= absolute(beforeScaled - target * total) * afterTotal) {
+    return evidence(false, "not-closer-to-target", projected);
+  }
+  return evidence(true, "closer-within-opposite-boundary", projected);
+}
+
 export function evaluatePolicy(transaction, policy, { market, now = Date.now(), decoded } = {}) {
   const checks = [];
   const add = (id, label, passed, detail) => checks.push({ id, label, passed, severity: "critical", detail });
@@ -129,13 +172,18 @@ export function evaluatePolicy(transaction, policy, { market, now = Date.now(), 
     add("price-deviation", "独立市价偏差", quoteAvailable && priceDeviation <= BigInt(policy.maxPriceDeviationBps), `${priceDeviation} BPS`);
   }
   add("slippage", "最大滑点", quoteAvailable && worstSlippage <= BigInt(policy.maxSlippageBps), `${worstSlippage} BPS`);
+  const mandateCheck = policy.portfolioMandate && swaps.length
+    ? portfolioSwapCheck(policy.portfolioMandate, market?.portfolio, swaps.length === 1 ? swaps[0] : null, swapPricing)
+    : null;
+  if (mandateCheck) add("portfolio-mandate", "仓位纠偏规则", mandateCheck.passed, mandateCheck.reason);
   const derived = { method: facts.method, valueUsd: Number(value) / 1_000_000, approvalUsd: Number(exposure) / 1_000_000,
     slippageBps: Number(worstSlippage), assetIn: asset(policy, chainId, tokens[0])?.symbol,
     assetOut: asset(policy, chainId, tokens.at(-1))?.symbol };
   add("claims", "自报字段核对", matchesClaims(transaction, derived), "自报字段必须与解码和定价一致");
   return verdict(checks, { ...facts, valuation: { source: market?.source ?? null, block: market?.blockTag, portfolio: market?.portfolio, valueUsdMicros: value.toString(),
     approvalUsdMicros: exposure.toString(), worstSlippageBps: Number(worstSlippage), priceDeviationBps: Number(priceDeviation), complete: quoteAvailable,
-    ...(swapPricing && { swapPricing }) } });
+    ...(swapPricing && { swapPricing }),
+    ...(mandateCheck?.projectedExposureBps !== undefined && { projectedExposureBps: mandateCheck.projectedExposureBps }) } });
 }
 
 function adverseBps(start, end, denominator = start) {

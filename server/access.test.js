@@ -148,6 +148,7 @@ it.each([true, false])("enforces an exact committed short run and halts on a vet
   const { server, origin } = await start({ database, shortAcceptance: acceptance, wallet: signer.address, now: () => blockTime,
     issuerKey: Wallet.createRandom().privateKey, guardAddress: signer.address, routerBudgetId: "fixture-short", routerBudgetLimit: 6,
     marketFor: async () => ({ source: "short-fixture", usdMicros: { [asset.usdc]: "1000000", [asset.weth]: "2000000000" },
+      portfolio: { ethExposureBps: 3000, totalUsdMicros: "20000000" },
       swapQuote: { input: "1000000", output: "500000000000000" } }) });
   const [renewal, swap, rejection] = plan.transactions;
   const reply = (transaction) => post(origin, "review", { transaction }, authorized);
@@ -206,7 +207,7 @@ it("retains reviewer explanations for a verified veto without persisting raw mod
   expect(await response.json()).toMatchObject({ decision: "BLOCK", permit: null });
   expect(prompts).toHaveLength(2);
   for (const prompt of prompts) {
-    expect(prompt).toContain("When verified exposure is outside the band");
+    expect(prompt).toContain("Outside the band, a swap must move exposure closer to 40%");
     expect(prompt).toContain("may prepare a corrective swap");
     expect(prompt).toContain('"ethExposureBps":3005');
     expect(prompt).toContain('"approvalUsdMicros":"2843095"');
