@@ -23,7 +23,7 @@ export function isRecipientRejection(entry, safe) {
 }
 
 export async function checkRecipientRejection(client, safe) {
-  const proposed = { chainId: baseSepolia.chainId, from: safe, to: baseSepolia.usdc, value: "0", data };
+  const proposed = recipientRejectionProposal(safe);
   const result = await client.review(proposed);
   const entry = { event: "recipient-rejected", decision: result.decision, permit: result.permit,
     transaction: result.transaction, blockers: result.deterministic?.blockers, transactionHash: result.evidence?.transactionHash,
@@ -33,4 +33,8 @@ export async function checkRecipientRejection(client, safe) {
     throw new Error("The recipient acceptance check did not produce a verified policy rejection.");
   }
   return entry;
+}
+
+export function recipientRejectionProposal(safe) {
+  return { chainId: baseSepolia.chainId, from: safe, to: baseSepolia.usdc, value: "0", data };
 }

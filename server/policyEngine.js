@@ -63,6 +63,7 @@ export function evaluatePolicy(transaction, policy, { market, now = Date.now(), 
   let quoteAvailable = true;
   let worstSlippage = 0n;
   let priceDeviation = 0n;
+  let swapPricing;
   const { chainId, from, to } = facts.tx;
   const swaps = facts.effects.filter(({ kind }) => kind === "swap");
   const transfers = facts.effects.filter(({ kind }) => kind === "transfer");
@@ -99,6 +100,10 @@ export function evaluatePolicy(transaction, policy, { market, now = Date.now(), 
     const quotedOut = quote ? usdMicros(quote.output, effect.path.at(-1), chainId, policy, market, false) : null;
     quoteAvailable &&= Boolean(quotedIn && quotedOut);
     if (!quotedIn || !quotedOut) continue;
+    if (swaps.length === 1 && input !== null && output !== null) {
+      swapPricing = { input: quote.input, output: quote.output, maximumInputUsdMicros: input.toString(),
+        minimumOutputUsdMicros: output.toString(), quotedInputUsdMicros: quotedIn.toString(), quotedOutputUsdMicros: quotedOut.toString() };
+    }
     const delta = quotedIn > quotedOut ? quotedIn - quotedOut : quotedOut - quotedIn;
     priceDeviation = (delta * 10_000n + quotedIn - 1n) / quotedIn;
     worstSlippage = effect.exactOut
@@ -111,9 +116,11 @@ export function evaluatePolicy(transaction, policy, { market, now = Date.now(), 
     exposure += amount ?? 0n;
   }
   const expiresIn = Math.floor(now / 1000);
+  const approvalWindow = policy.shortPermit2ApprovalSeconds && policy.permit2[`${chainId}:${to}`]
+    && facts.method === "approve(address,address,uint160,uint48)" ? policy.shortPermit2ApprovalSeconds : 3600;
   add("approval", "授权额度", approvals.every((effect) => !effect.unlimited && !effect.additive && effect.protocol !== "operator"
     && policy.allowedSpenders.includes(effect.spender) && (!effect.owner || effect.owner === from)
-    && (effect.expiration === undefined || effect.amount === "0" || (effect.expiration > expiresIn && effect.expiration <= expiresIn + 3600))
+    && (effect.expiration === undefined || effect.amount === "0" || (effect.expiration > expiresIn && effect.expiration <= expiresIn + approvalWindow))
     && (effect.signatureDeadline === undefined || BigInt(effect.signatureDeadline) > BigInt(expiresIn)))
     && exposure <= BigInt(policy.maxApprovalUsd) * 1_000_000n, "核对授权对象、有效期和额度");
   add("market", "独立定价证据", quoteAvailable, market?.source ?? "没有可用的独立价格");
@@ -127,7 +134,8 @@ export function evaluatePolicy(transaction, policy, { market, now = Date.now(), 
     assetOut: asset(policy, chainId, tokens.at(-1))?.symbol };
   add("claims", "自报字段核对", matchesClaims(transaction, derived), "自报字段必须与解码和定价一致");
   return verdict(checks, { ...facts, valuation: { source: market?.source ?? null, block: market?.blockTag, portfolio: market?.portfolio, valueUsdMicros: value.toString(),
-    approvalUsdMicros: exposure.toString(), worstSlippageBps: Number(worstSlippage), priceDeviationBps: Number(priceDeviation), complete: quoteAvailable } });
+    approvalUsdMicros: exposure.toString(), worstSlippageBps: Number(worstSlippage), priceDeviationBps: Number(priceDeviation), complete: quoteAvailable,
+    ...(swapPricing && { swapPricing }) } });
 }
 
 function adverseBps(start, end, denominator = start) {

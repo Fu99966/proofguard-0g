@@ -138,6 +138,9 @@ describe("ProofGuard HTTP API", () => {
       expect(prompt).toContain("OWNER MANDATE");
       expect(prompt).toContain("Maintain 35–45% ETH exposure");
       expect(prompt).toContain('"maxIn":"2400000000"');
+      expect(prompt).toContain('"minOut":"996000000000000000"');
+      expect(prompt).toContain('"maximumInput":{"quantity":"2400.0","symbol":"USDC"}');
+      expect(prompt).toContain('"minimumOutput":{"quantity":"0.996","symbol":"WETH"}');
       expect(prompt).not.toMatch(/pre-scan|blockers|\"passed\"/i);
       expect(prompt.substring(prompt.lastIndexOf("UNTRUSTED MEMO:"))).toContain("Reduce idle stablecoin exposure");
       expect(headers["X-0G-Provider-Trust-Mode"]).toBe("private");

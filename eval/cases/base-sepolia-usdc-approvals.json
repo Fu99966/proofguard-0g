@@ -1,0 +1,104 @@
+{
+  "chainId": 84532,
+  "token": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+  "selection": "Confirmed direct nonzero ERC-20 approvals, distinct senders, exact calldata and Approval event in canonical receipt. These are reference transactions for decoder coverage.",
+  "asOfBlock": 60729367,
+  "cases": [
+    {
+      "hash": "0xdcf24655edeb31445a2547a59197492cdeb3dff4950a1bea57bfb72bd8822c84",
+      "block": 60728893,
+      "blockHash": "0xf910e3c254feed8ff0a3c9e74b6865e73596ef2b3fbe5c9d1662c203701d87d2",
+      "sender": "0xcC2363Eb79eea548823724e9467d3D9096Eaa316",
+      "spender": "0x93083f60F1877a6bA974d5eD88Bb74943deB8390",
+      "amount": "2000000"
+    },
+    {
+      "hash": "0x2d8f0a483870d1a54bd7c8e3fcab021b1140ca922e306f90ab4dc6bdcc4dc697",
+      "block": 60728172,
+      "blockHash": "0xff78de842b71fbf9d0abcc4d3f03e0f55d365b705fc3847ced65d01a829887b3",
+      "sender": "0x2A539F40c2Bab42A5B629bC606f86fDD9171Bb0E",
+      "spender": "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4",
+      "amount": "10000000"
+    },
+    {
+      "hash": "0x63401f95768a5ea1cea0141577e0960ae26d574091345da2c71c5a5b229bac4e",
+      "block": 60726901,
+      "blockHash": "0xb03a06b7612414af848b21be34564e9454529f8c25f87f2bb702d0a940692c09",
+      "sender": "0x37607dDcC49258eCE6fF6b770002888B300Febf2",
+      "spender": "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4",
+      "amount": "25000"
+    },
+    {
+      "hash": "0x98a799163c46250901b97b2360d357af0cdbd39c49764ad5355dd53ec6ed6765",
+      "block": 60726329,
+      "blockHash": "0xa99256e52bbb352eb9c252a63583c5b31e99c60c18500841a706eb273530127d",
+      "sender": "0x0db80fA6112BDcA8B410868fC6fB543aA7BB74e2",
+      "spender": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+      "amount": "1377961"
+    },
+    {
+      "hash": "0x50ac10fd5f1b46f64b13b51ac6873ab871621103358169638af9fd6a690b8a1e",
+      "block": 60726039,
+      "blockHash": "0xc0f0878757ed438e46ac684a86c9706b100dc6bfd662829f1a3d183d680ae10d",
+      "sender": "0x5f0C97D2c0c5268Eb1a5e32D7C05e9e0ec0970C5",
+      "spender": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+      "amount": "100000000"
+    },
+    {
+      "hash": "0x60c0839bbf3347f218eea1ef6d83a9ae063b73a5f37514d243ad0555fae8d59e",
+      "block": 60724847,
+      "blockHash": "0x128a7770be5bc24cf8d802c1dfba0640ca7297d76855506926b0983c8ea3ba18",
+      "sender": "0xE7035641DAa1815F0eCe6415D1001C85F51a2255",
+      "spender": "0x1c3e28E5048F30aB3AA8A5dc4e71A806EC97A6C4",
+      "amount": "1000000"
+    },
+    {
+      "hash": "0x247974a40106b56a57c95a0de367853806157a51fcd11060c025c44451c4f7cd",
+      "block": 60719776,
+      "blockHash": "0xbdf4e5a9ff2bc94670950cf2a750f29cba76a44b5bb155b744cf1b82853fda4d",
+      "sender": "0x19e9Bb39fDa67DFFa75ccb1dBD876d8003d43bD0",
+      "spender": "0xd062031D1cbc00eE81e51150Fa78dd91FbdF4471",
+      "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    },
+    {
+      "hash": "0xfcd503eca4a1470c84d3b92bdb33ff7bf716948e0e215fb0206c9bd3b8d345a2",
+      "block": 60719614,
+      "blockHash": "0x3947e10d902763f13cd3f55843bbb2b536080fafd3161a1291581f865aeeba2f",
+      "sender": "0xfdA5a8DC19e814A7880515fEB88308BbEE625D6D",
+      "spender": "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4",
+      "amount": "24411576"
+    },
+    {
+      "hash": "0xc73ae62a23da053655551179c497250460feef6e9f54818d845701276682867c",
+      "block": 60716404,
+      "blockHash": "0x8f1a915c8e61ca443d4b949c4b454660fc33a5f6cdbccdcd0657a480c98d4f35",
+      "sender": "0xf8861AFe6A37554b307ff5946EA0b99AD0D6A780",
+      "spender": "0xBE9D1CD71dbfC0C4F1867F120cb1e5D153164409",
+      "amount": "10000000"
+    },
+    {
+      "hash": "0xd7fea0e92ef8228a3e74fb69396e36900df1ddc5334dd2f0fd92bf960b541250",
+      "block": 60715641,
+      "blockHash": "0x8e3918d3a7f0a02c6fd3851ee588994e9c5f6aefee174df1398779ccb1561f3e",
+      "sender": "0xC29cBD5B6eAf8339B9743F933183823a49320965",
+      "spender": "0x252611113719aA2c0Eb1ecEaec38E52e25ee1415",
+      "amount": "120278"
+    },
+    {
+      "hash": "0x0a445243a03defe03e6b02c951c2d97dc0c4a36a51443d202243bd8aae63ac03",
+      "block": 60708966,
+      "blockHash": "0x376e471f590819d1ec2eefe2c74c5ef9395da2b5ec1cabace3d13b627bc6c58f",
+      "sender": "0x97b43F9ec3e33BF78fc80BD88b066752B27c8b60",
+      "spender": "0x93083f60F1877a6bA974d5eD88Bb74943deB8390",
+      "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    },
+    {
+      "hash": "0x5d874aeb2db9b0f9b078d9411d20a5f0aaaf81ae6a2652e00a3cf28d44ea308b",
+      "block": 60708817,
+      "blockHash": "0xdd85311ea83ce7352ea2efff9eedf811d1a4163ff6ca19c2865c1c204dc4f70b",
+      "sender": "0x0366799ab0daa548e05b31c1dbde90aE87A60D03",
+      "spender": "0x93083f60F1877a6bA974d5eD88Bb74943deB8390",
+      "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    }
+  ]
+}

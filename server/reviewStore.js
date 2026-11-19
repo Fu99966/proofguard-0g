@@ -1,6 +1,20 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+
+export function readRouterRequestsUsed(filename, scope) {
+  if (!existsSync(filename)) return 0;
+  const db = new Database(filename, { readonly: true, fileMustExist: true });
+  try {
+    const budgetTable = db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'router_budgets'").get();
+    if (!budgetTable) return 0;
+    const used = db.prepare("SELECT reserved FROM router_budgets WHERE scope = ?").get(scope)?.reserved ?? 0;
+    if (!Number.isSafeInteger(used) || used < 0) throw new Error("The persisted Router budget count is invalid.");
+    return used;
+  } finally {
+    db.close();
+  }
+}
 
 export function openReviewStore(filename) {
   if (filename !== ":memory:") mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 });
@@ -17,6 +31,12 @@ export function openReviewStore(filename) {
     CREATE TABLE IF NOT EXISTS router_budgets (
       scope TEXT PRIMARY KEY,
       reserved INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS acceptance_runs (
+      authorization TEXT PRIMARY KEY,
+      run_id TEXT UNIQUE NOT NULL,
+      commit_hash TEXT NOT NULL,
+      recorded_at INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS permits (
       hash TEXT PRIMARY KEY,
@@ -36,6 +56,9 @@ export function openReviewStore(filename) {
     ON CONFLICT (scope) DO UPDATE SET reserved = reserved + excluded.reserved WHERE reserved + excluded.reserved <= ?`);
   const consume = db.prepare("UPDATE permits SET consumed_at = ? WHERE hash = ? AND consumed_at IS NULL AND expires_at > ?");
   return {
+    recordAcceptanceStart(authorization, runId, commit, at) {
+      db.prepare("INSERT INTO acceptance_runs VALUES (?, ?, ?, ?)").run(authorization, runId, commit, at);
+    },
     record: db.transaction((transactionHash, record, permit, now) => {
       const review = insertReview.run(now, transactionHash, JSON.stringify(record));
       if (permit) insertPermit.run(permit.permitHash, permit.nonce, review.lastInsertRowid, Date.parse(permit.expiresAt), JSON.stringify(permit));

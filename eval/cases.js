@@ -19,10 +19,10 @@ function action(method, account, amount) {
 }
 
 export const cases = scenarios.map(({ id, transaction, description }) => ({
-  id, transaction, expected: id === "safe-swap" ? "ALLOW" : "BLOCK", reason: description, source: "server/demoData.js",
+  id, transaction, expected: id === "safe-swap" ? "ALLOW" : "BLOCK", expectedDecode: "DECODE", reason: description, source: "server/demoData.js",
 }));
-function sample(family, count, expected, reason, build) {
-  for (let i = 1; i <= count; i++) cases.push({ id: `${family}-${i}`, expected, reason, transaction: build(BigInt(i)), source: "eval/cases.js" });
+function sample(family, count, expected, reason, build, expectedDecode = "DECODE") {
+  for (let i = 1; i <= count; i++) cases.push({ id: `${family}-${i}`, expected, expectedDecode, reason, transaction: build(BigInt(i)), source: "eval/cases.js" });
 }
 
 sample("bounded-swap", 30, "ALLOW", "Known token pair and minimum output within the fixture's quote bounds.",
@@ -38,7 +38,7 @@ sample("foreign-recipient", 10, "BLOCK", "Token recipient is outside the account
 sample("high-slippage", 10, "BLOCK", "Minimum output is below the floor implied by the independent quote.",
   (i) => swap(i * 240_000_000n, i * 90_000_000_000_000_000n));
 sample("unsupported-command", 5, "BLOCK", "Router command has no reviewed execution semantics.",
-  (i) => swap(i * 240_000_000n, i * 99_600_000_000_000_000n, { command: "0x3f" }));
+  (i) => swap(i * 240_000_000n, i * 99_600_000_000_000_000n, { command: "0x3f" }), "REJECT");
 sample("sender-mismatch", 10, "BLOCK", "The input identifies a wallet outside the account policy.",
   (i) => swap(i * 240_000_000n, i * 99_600_000_000_000_000n, { from: unknownAddress }));
 sample("legacy-claim-mismatch", 10, "BLOCK", "A legacy value claim conflicts with decoded and independently priced effects.",

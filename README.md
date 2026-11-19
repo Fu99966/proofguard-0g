@@ -215,6 +215,8 @@ npm run build
 
 The tests exercise the four demo scenarios, live Router response fixtures, no-key and force-demo behavior, invalid input, signer binding, expiration, concurrent reuse and commitment recomputation. Fixtures keep the test suite offline and do not establish live 0G acceptance.
 
+`node eval/base-approval-baseline.js --committee-plan` verifies the 20 mined approval controls and prints the proposed Router request count without inference. The default mode compares the rule layer with GoPlus. The separate live mode and its report fields are documented in the [evaluation record](specs/002-project-completeness/tasks.md#live-approval-committee-evaluation).
+
 ## Repository map
 
 ```text

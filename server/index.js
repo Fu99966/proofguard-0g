@@ -13,6 +13,8 @@ import { evaluatePolicy, isTransactionProposal, issuePermit, stableHash } from "
 import { decodeTransaction } from "./decoder.js";
 import { chainlinkMarket } from "./market.js";
 import { getZeroGConfig, reviewWithZeroG, ZeroGReviewError } from "./zeroGAdapter.js";
+import { approvalWindowSeconds } from "../examples/rebalancer/short-acceptance.js";
+import { hasVerifiedReviewers } from "../examples/rebalancer/rejection.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -23,9 +25,13 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
   frontendOrigins = (process.env.PROOFGUARD_FRONTEND_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean),
   issuerKey = process.env.PROOFGUARD_TESTNET_ISSUER_KEY, guardAddress = process.env.PROOFGUARD_TESTNET_GUARD_ADDRESS,
   routerBudgetLimit = process.env.PROOFGUARD_ROUTER_REQUEST_LIMIT, routerBudgetId = process.env.PROOFGUARD_ROUTER_BUDGET_ID,
-  rateOptions, database = process.env.PROOFGUARD_DATABASE_PATH || "var/proofguard.sqlite" } = {}) {
+  rateOptions, shortAcceptance, database = process.env.PROOFGUARD_DATABASE_PATH || "var/proofguard.sqlite" } = {}) {
   const policy = { ...demoPolicy, owner: owner ? getAddress(owner) : null };
   const livePolicy = testnetPolicy(policy.owner, wallet ? getAddress(wallet).toLowerCase() : null);
+  const shortHashes = shortAcceptance?.transactions.map(stableHash);
+  let shortStep = 0;
+  let shortHalted = false;
+  let shortReviewActive = false;
   const issuer = issuerKey && guardAddress ? new Wallet(issuerKey) : null;
   const verifyingContract = issuer ? getAddress(guardAddress) : null;
   const requestLimit = routerBudgetLimit === undefined || routerBudgetLimit === "" ? null : Number(routerBudgetLimit);
@@ -86,8 +92,17 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
       return;
     }
 
-    const reviewPolicy = hasTransaction ? livePolicy : policy;
     const transactionHash = stableHash(transaction);
+    const isShort = Boolean(shortAcceptance && !publicDemo);
+    if (isShort && (shortHalted || shortReviewActive || shortHashes[shortStep] !== transactionHash)) {
+      shortHalted = true;
+      return res.status(409).json({ decision: "BLOCK", permit: null, error: "The committed short acceptance is stopped or out of order." });
+    }
+    if (isShort) shortReviewActive = true;
+    const shortEvidence = isShort ? { acceptance: { commit: shortAcceptance.commit, runId: shortAcceptance.runId, step: shortStep + 1, memo: transaction.memo } } : {};
+    const reviewPolicy = isShort && shortStep === 0 ? { ...livePolicy, shortPermit2ApprovalSeconds: approvalWindowSeconds,
+      mandate: `${livePolicy.mandate} For this operator-approved Base Sepolia acceptance renewal only, the exact allowance for the planned swap may last 48 hours plus up to ten minutes for settlement. The approved scope is the registered Permit2 contract and registered testnet router.` }
+      : hasTransaction ? livePolicy : policy;
     const policyHash = stableHash(reviewPolicy);
     let deterministic;
     try {
@@ -100,14 +115,23 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
       const recognized = decoded && livePolicy.agentWallet === decoded.tx.from && livePolicy.allowedChains.includes(decoded.tx.chainId);
       const market = hasTransaction ? (recognized ? await marketFor(decoded) : null) : demoMarket;
       deterministic = evaluatePolicy(transaction, reviewPolicy, { market, now: now(), decoded });
+      if (isShort && (getZeroGConfig().mode !== "live" || (shortStep < 2 ? !deterministic.passed : !deterministic.blockers.includes("recipient")))) {
+        shortHalted = true;
+        store.record(transactionHash, { decision: "BLOCK", deterministic, policyHash, ...shortEvidence, permit: null }, null, now());
+        return res.status(409).json({ decision: "BLOCK", permit: null, error: "The short acceptance failed deterministic preflight." });
+      }
       if (!publicDemo && requestLimit !== null && getZeroGConfig().mode === "live"
         && !store.reserveRouterRequests(routerBudgetId, 2, requestLimit)) {
-        store.record(transactionHash, { decision: "BLOCK", deterministic, policyHash, inferenceError: "Router budget exhausted", permit: null }, null, now());
+        if (isShort) shortHalted = true;
+        store.record(transactionHash, { decision: "BLOCK", deterministic, policyHash, ...shortEvidence, inferenceError: "Router budget exhausted", permit: null }, null, now());
         res.status(429).json({ error: "Router budget exhausted for this run.", code: "ROUTER_BUDGET_EXHAUSTED", decision: "BLOCK", permit: null });
         return;
       }
       const inference = await reviewWithZeroG({ transaction, policy: reviewPolicy, deterministic, forceDemo: publicDemo });
-      const permit = issuePermit({ transaction, policy: reviewPolicy, inference, deterministic, now: now() });
+      const verified = !isShort || hasVerifiedReviewers(inference.committee.map(({ role, model, decision, receipt }) => ({
+        role, model, decision, requestId: receipt.requestId, verification: receipt.verification,
+      })));
+      const permit = verified ? issuePermit({ transaction, policy: reviewPolicy, inference, deterministic, now: now() }) : null;
       const evidence = { transactionHash, policyHash, responseCommitment: stableHash(inference.rawDecision) };
       let onchainPermit;
       if (permit && issuer && hasTransaction && inference.mode === "live") {
@@ -116,17 +140,28 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
       }
       const response = { decision: permit ? "ALLOW" : "BLOCK", transaction, deterministic, inference, permit, evidence, onchainPermit };
       if (!publicDemo || permit?.owner) store.record(transactionHash, {
-        decision: response.decision, deterministic, evidence,
-        reviews: inference.committee.map(({ role, model, decision, receipt }) => ({ role, model, decision,
-          requestId: receipt.requestId ?? null, verification: receipt.verification })),
+        decision: response.decision, deterministic, evidence, ...shortEvidence,
+        reviews: inference.committee.map(({ role, model, decision, receipt, summary, threats, charge }) => ({
+          role, model, decision, requestId: receipt.requestId ?? null, verification: receipt.verification,
+          ...(charge && { charge }),
+          ...((isShort || response.decision === "BLOCK") && {
+            summary: summary.slice(0, 400),
+            threats: threats.slice(0, 3).map((threat) => threat.slice(0, 160)),
+          }),
+        })),
         permit, onchainPermit: onchainPermit ? { verifyingContract, issuer: issuer.address } : null,
       }, permit, now());
+      if (isShort) {
+        if (verified && (shortStep < 2 ? Boolean(onchainPermit) : !permit)) shortStep++;
+        else shortHalted = true;
+      }
       res.json(response);
     } catch (error) {
+      if (isShort) shortHalted = true;
       if (error instanceof ZeroGReviewError) {
         try {
           if (!publicDemo) store.record(transactionHash, {
-            decision: "BLOCK", deterministic, policyHash, inferenceError: error.message, permit: null,
+            decision: "BLOCK", deterministic, policyHash, ...shortEvidence, inferenceError: error.message, permit: null,
           }, null, now());
         } catch (storageError) {
           next(storageError);
@@ -136,6 +171,8 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
         return;
       }
       next(error);
+    } finally {
+      if (isShort) shortReviewActive = false;
     }
   }
 

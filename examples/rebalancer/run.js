@@ -10,12 +10,16 @@ import { guardedSafeSigner } from "../../sdk/guard.js";
 import { baseSepolia } from "../../sdk/network.js";
 import { rebalance } from "./strategy.js";
 import { checkRecipientRejection } from "./rejection.js";
+import { minimumRenewalSeconds } from "./short-acceptance.js";
 
 const env = process.env;
 const live = process.argv.includes("--send");
+const short = process.argv.includes("--short-acceptance");
 const once = !process.argv.includes("--observe-24h");
 const interval = 5 * 60_000;
-const runId = randomUUID();
+const runId = env.PROOFGUARD_ACCEPTANCE_RUN_ID || randomUUID();
+const acceptanceCommit = env.PROOFGUARD_ACCEPTANCE_COMMIT;
+if (short && (!live || !once || !/^[a-f\d]{40}$/.test(acceptanceCommit ?? ""))) throw new Error("Short acceptance requires a committed live testnet launcher.");
 const safe = getAddress(env.PROOFGUARD_AGENT_WALLET).toLowerCase();
 const journal = env.PROOFGUARD_AGENT_LOG || "var/agent.jsonl";
 const rpc = env.PROOFGUARD_RPC_URL;
@@ -51,7 +55,8 @@ let rejectionRecorded = false;
 await mkdir(path.dirname(journal), { recursive: true, mode: 0o700 });
 
 async function record(entry) {
-  const line = JSON.stringify({ at: new Date().toISOString(), mode: live ? "testnet" : "observe", runId, ...entry },
+  const line = JSON.stringify({ at: new Date().toISOString(), mode: live ? "testnet" : "observe", runId,
+    ...(acceptanceCommit && { commit: acceptanceCommit }), ...entry },
     (_name, value) => typeof value === "bigint" ? value.toString() : value);
   await appendFile(journal, `${line}\n`, { mode: 0o600 });
   console.log(line);
@@ -137,7 +142,11 @@ async function tick() {
     return outUsd > 0n && delta * 10_000n <= inUsd * 300n;
   });
   const best = plausible.reduce((selected, item) => !selected || item.quoted > selected.quoted ? item : selected, null);
-  if (!best?.quoted) throw new Error("No supported Uniswap V3 pool can quote this order.");
+  if (!best?.quoted) {
+    if (once) throw new Error("No supported Uniswap V3 quote meets the price limit.");
+    await record({ event: "quote-unavailable", blockTag, reason: "No supported quote meets the independent price limit." });
+    return;
+  }
   const minOut = best.quoted * 9975n / 10_000n;
   if (minOut === 0n) throw new Error("The swap cannot provide a nonzero output floor.");
   await record({ event: "quote", tokenIn: trade.tokenIn, tokenOut: trade.tokenOut, amount: trade.amount, minOut, fee: best.fee });
@@ -164,6 +173,40 @@ async function recordBoundary(event, earliestTimestamp = 0) {
   await record({ event, chainId: baseSepolia.chainId, agent, safe, guard: guardAddress,
     blockTag: block.number, blockHash: block.hash, nonce: agent ? await provider.getTransactionCount(agent, block.number) : null });
   return block.timestamp;
+}
+
+if (short) {
+  const plan = JSON.parse(env.PROOFGUARD_SHORT_PLAN);
+  const [renewal, swap] = plan.transactions;
+  let step = "permit2-renewal";
+  await record({ event: "short-started", amount: plan.amount, tokenIn: plan.tokenIn, expiresAt: plan.expiresAt });
+  try {
+    const [allowance, currentPermit] = await Promise.all([token[plan.tokenIn].allowance(safe, baseSepolia.permit2),
+      permit2.allowance(safe, plan.tokenIn, baseSepolia.router)]);
+    if (allowance < BigInt(plan.amount) || currentPermit.expiration > BigInt(Math.floor(Date.now() / 1000))) {
+      throw new Error("The required ERC-20 allowance or expired Permit2 state does not match the approved three-step flow.");
+    }
+    const renewalReceipt = await submit(renewal);
+    const [block, renewed] = await Promise.all([provider.getBlock(renewalReceipt.blockNumber),
+      permit2.allowance(safe, plan.tokenIn, baseSepolia.router, { blockTag: renewalReceipt.blockNumber })]);
+    if (renewed.amount !== BigInt(plan.amount) || renewed.expiration !== BigInt(plan.expiresAt)
+      || !block || plan.expiresAt - block.timestamp < minimumRenewalSeconds) throw new Error("The confirmed allowance does not meet the requested amount and 48-hour validity.");
+    await record({ event: "permit2-renewal-verified", step, blockTag: block.number, txHash: renewalReceipt.hash,
+      amount: renewed.amount, expiresAt: plan.expiresAt, remainingSeconds: plan.expiresAt - block.timestamp, reason: renewal.memo });
+    step = "safe-swap";
+    await submit(swap, { ...plan, amount: BigInt(plan.amount), minOut: BigInt(plan.minOut) });
+    const after = await market({ tx: { chainId: baseSepolia.chainId, from: safe } });
+    const exposure = after?.portfolio?.ethExposureBps;
+    if (!Number.isFinite(exposure) || exposure < 3500 || exposure > 4500) throw new Error("The confirmed swap did not return exposure to the 35–45% band.");
+    await record({ event: "post-swap-position", blockTag: after.blockTag, ethExposureBps: exposure });
+    step = "invalid-recipient";
+    await record(await checkRecipientRejection(client, safe));
+    await record({ event: "short-finished" });
+    process.exit(0);
+  } catch (error) {
+    await record({ event: "short-failed", step, reason: error.message });
+    process.exit(1);
+  }
 }
 
 const durationSeconds = 24 * 60 * 60;
