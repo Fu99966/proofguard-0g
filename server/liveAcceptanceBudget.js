@@ -49,7 +49,7 @@ export function liveModelBounds(models, catalog) {
 }
 
 export async function verifiedLiveBounds(models) {
-  const response = await fetch(publicProviderCatalog, { redirect: "error", signal: AbortSignal.timeout(8_000) });
+  const response = await fetch(publicProviderCatalog, { redirect: "error", signal: AbortSignal.timeout(25_000) });
   if (!response.ok) throw new LiveBudgetError("The Router provider catalog could not be verified.");
   const { data } = await response.json();
   if (!Array.isArray(data)) throw new LiveBudgetError("The Router provider catalog is malformed.");
