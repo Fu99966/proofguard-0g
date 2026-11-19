@@ -4,7 +4,7 @@
 - [x] T002 Verify blind committee evidence, defensive refusal cases and three historical Base Router transactions (FR-001, FR-002).
 - [x] T003 Deliver authenticated API, CORS, rate limiting and persistent audit and nonce state. Verify restart and 20 concurrent consumes (FR-003).
 - [x] T004 Implement EIP-712 wallet and API signing, CI workflow and documentation (FR-003).
-- [ ] T004A Verify the wallet's EIP-712 display with an interactive wallet (FR-003).
+- [x] T004A Verify the wallet's EIP-712 display with an interactive wallet (FR-003).
 - [x] T004B Verify GitHub Actions on the open draft pull request (FR-003).
 - [x] T005 Measure deterministic-policy recall and false-positive rate on the repeatable offline dataset (FR-006).
 - [ ] T005A Measure the live committee on independent, labeled cases and compare results with external baselines (FR-006).
@@ -38,6 +38,10 @@ The funding transaction `0xe76612a56bde3148249a2753bddbeda54d15187c896bb9d450c9a
 The existing Cloud Run service URL and deployment credentials were unavailable in this workspace. No deployment action was recorded. The public demo route in the new implementation uses local simulated reviews even when the authenticated Agent route is configured with a 0G key.
 
 A clean Node 22.23.5 install passed 51 JavaScript and HTTP tests, seven Foundry tests, and the production build. The production dependency audit reported zero findings. The full development dependency audit still reports findings.
+
+## Interactive EIP-712 wallet verification recorded 2026-11-19
+
+The production browser build connected to [Enkrypt 2.19.0](https://github.com/enkryptcom/enKrypt/releases/tag/v2.19.0) in an isolated Chromium profile with a temporary wallet. A loopback API issued a demo permit and used an in-memory audit store. The extension received `eth_signTypedData_v4` and its signing popup showed the ProofGuard domain, Base chain ID `8453`, and the exact `to`, `value`, and `deadline` from the permit. Enkrypt labeled this request `Token Approval Signature`. The detailed view showed the ProofGuard payload. The temporary wallet signed it, `/api/execute` verified and consumed the expected permit with status `simulated`, and a second submission returned HTTP `422` with `Permit nonce already consumed`. This browser check used zero Router calls and broadcast zero transactions.
 
 ## Public testnet evidence recorded 2026-11-19
 
