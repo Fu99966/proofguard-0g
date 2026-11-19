@@ -10,6 +10,7 @@ import { createProofGuardClient } from "../sdk/index.js";
 import { guardedSafeSigner } from "../sdk/guard.js";
 import { baseSepolia } from "../sdk/network.js";
 import { createSampler, stringifyEvidence } from "../examples/rebalancer/sampler.js";
+import { loadLiveCheckpoint } from "../examples/rebalancer/live-checkpoint.js";
 import { submitGuarded } from "../examples/rebalancer/execution.js";
 import { planShortAcceptance } from "../examples/rebalancer/short-acceptance.js";
 import { allowanceRenewals } from "../examples/rebalancer/strategy.js";
@@ -22,7 +23,10 @@ import { getZeroGConfig } from "../server/zeroGAdapter.js";
 if (execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim()) throw new Error("Commit the live acceptance implementation first.");
 const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const root = "var/testnet-acceptance";
-const database = join(root, "two-hour-live-20261119.sqlite");
+const args = process.argv.slice(2);
+if (args.length && (args.length !== 2 || args[0] !== "--resume")) throw new Error("Use --resume with the stopped live run ID.");
+const checkpoint = args.length ? await loadLiveCheckpoint(root, args[1]) : null;
+const database = join(root, checkpoint ? `live-resumed-${checkpoint.sourceRun}.sqlite` : "two-hour-live-20261119.sqlite");
 const { safe: checksumSafe, guard: guardAddress, chainId, noPermitReverts } = JSON.parse(await readFile(join(root, "deployment.json"), "utf8"));
 const keys = JSON.parse(await readFile(join(root, "wallets.json"), "utf8"));
 const safe = checksumSafe.toLowerCase();
@@ -171,6 +175,15 @@ async function expectReviewError(transaction, code, integrityCode) {
   throw Object.assign(new Error("A review request bypassed its expected pre-dispatch rejection."), { code: integrityCode });
 }
 
+async function verifiedDeposit(hash) {
+  const receipt = await provider.getTransactionReceipt(hash);
+  const event = receipt?.logs.filter((log) => log.address.toLowerCase() === baseSepolia.usdc).map((log) => token.interface.parseLog(log))
+    .find((log) => log?.name === "Transfer" && log.args.from === owner.address && log.args.to.toLowerCase() === safe && log.args.value === 5_000_000n);
+  requireThat(receipt?.status === 1 && receipt.from === owner.address && receipt.to.toLowerCase() === baseSepolia.usdc && event,
+    "The test-wallet deposit was not confirmed exactly as planned.");
+  return receipt;
+}
+
 try {
   const networks = await Promise.all([provider.getNetwork(), simulationProvider.getNetwork()]);
   requireThat(networks.every((entry) => entry.chainId === BigInt(baseSepolia.chainId)), "Base Sepolia RPC and simulation are required.");
@@ -180,33 +193,49 @@ try {
   const [ownerTokens, ownerGas, agentGas, initial] = await Promise.all([
     token.balanceOf(owner.address), provider.getBalance(owner.address), provider.getBalance(agent.address), sampler.sample(),
   ]);
-  requireThat(ownerTokens >= 5_000_000n && ownerGas > 0n && agentGas > 0n && initial.position.state === "in-band",
-    "The test wallet must have 5 test USDC and gas, and the Safe must start inside the exposure band.");
-  requireThat(initial.position.ethBps * initial.usdc < 3500n * (initial.usdc + 5_000_000n * (10_000n - initial.position.ethBps) / 10_000n),
-    "The planned 5 test USDC deposit would not push the Safe below 35%.");
-  budget = openLiveBudget(database);
-  budget.start(runId, commit);
-  const firstWorker = await launchWorker();
+  requireThat(agentGas > 0n, "The Agent needs Base Sepolia gas.");
   startingNonce = await provider.getTransactionCount(agent.address, "latest");
+  if (checkpoint) {
+    const { start: before, deposit } = checkpoint;
+    requireThat(before.safe === safe && before.agent === agent.address && before.guard === guardAddress && before.chainId === chainId
+      && startingNonce === before.startingNonce && initial.position.state === "buy-weth" && initial.quote?.minOut > 0n,
+    "The Safe position or Agent state changed since the reconciled checkpoint.");
+    ownerDeposit = (await verifiedDeposit(deposit.hash)).hash;
+  } else {
+    requireThat(ownerTokens >= 5_000_000n && ownerGas > 0n && initial.position.state === "in-band",
+      "The test wallet must have 5 test USDC and gas, and the Safe must start inside the exposure band.");
+    requireThat(initial.position.ethBps * initial.usdc < 3500n * (initial.usdc + 5_000_000n * (10_000n - initial.position.ethBps) / 10_000n),
+      "The planned 5 test USDC deposit would not push the Safe below 35%.");
+  }
+  budget = openLiveBudget(database);
+  budget.start(runId, commit, checkpoint?.costs);
+  const firstWorker = await launchWorker();
   start = Date.now();
   await record({ event: "started", chainId, safe, agent: agent.address, guard: guardAddress, startingNonce, firstWorker,
-    deadline: new Date(start + 120 * minute).toISOString(), bounds, pairMicros, maxRequests: liveRequestLimit, maxUsdMicros: liveUsdMicros });
+    deadline: new Date(start + 120 * minute).toISOString(), bounds, pairMicros, maxRequests: liveRequestLimit, maxUsdMicros: liveUsdMicros,
+    ...(checkpoint && { resumedFrom: checkpoint.sourceRun, inheritedDeposit: ownerDeposit, inheritedCharges: budget.priorRows() }) });
 
-  await runStep(1, "Stay in range for 20 minutes with zero review requests.", async () => {
-    await until(start + 20 * minute, ({ position }) => position.state === "in-band");
-    requireThat(budgetState().requests === 0, "In-band observation spent Router requests.", "LIVE_BUDGET_INTEGRITY");
-    return { elapsedMs: Date.now() - start, requests: 0 };
-  });
+  if (checkpoint) {
+    const carried = { number: 1, expectation: checkpoint.first.expectation,
+      actual: { ...checkpoint.first.actual, verifiedIn: checkpoint.sourceRun, commit: checkpoint.first.commit } };
+    checks.push(carried);
+    await record({ event: "step-carried-forward", ...carried });
+  } else {
+    await runStep(1, "Stay in range for 20 minutes with zero review requests.", async () => {
+      await until(start + 20 * minute, ({ position }) => position.state === "in-band");
+      requireThat(budgetState().requests === 0, "In-band observation spent Router requests.", "LIVE_BUDGET_INTEGRITY");
+      return { elapsedMs: Date.now() - start, requests: 0 };
+    });
+  }
 
   let swap;
   await runStep(2, "The dedicated test wallet deposits 5 test USDC, exposure falls below 35%, both reviewers approve and a guarded swap restores the band.", async () => {
-    const incoming = await token.connect(owner).transfer(safe, 5_000_000n);
-    await record({ event: "test-wallet-deposit-submitted", hash: incoming.hash, from: owner.address, safe, amount: "5000000" });
-    const deposit = await incoming.wait(2, 100_000);
-    const transfer = deposit?.logs.filter((log) => log.address.toLowerCase() === baseSepolia.usdc).map((log) => token.interface.parseLog(log))
-      .find((log) => log?.name === "Transfer" && log.args.from === owner.address && log.args.to.toLowerCase() === safe && log.args.value === 5_000_000n);
-    requireThat(deposit?.status === 1 && transfer, "The test-wallet deposit was not confirmed exactly as planned.");
-    ownerDeposit = deposit.hash;
+    if (!ownerDeposit) {
+      const incoming = await token.connect(owner).transfer(safe, 5_000_000n);
+      await record({ event: "test-wallet-deposit-submitted", hash: incoming.hash, from: owner.address, safe, amount: "5000000" });
+      await incoming.wait(2, 100_000);
+      ownerDeposit = (await verifiedDeposit(incoming.hash)).hash;
+    }
     const { position, quote } = await observe();
     requireThat(position.ethBps < 3500n && position.tokenIn === baseSepolia.usdc && quote?.minOut > 0n,
       "The test deposit did not produce an eligible below-band swap.");
@@ -320,9 +349,10 @@ try {
     if (state?.runId === runId) {
       const status = process.exitCode === 1 ? "failed" : "passed";
       const summary = checks.map(({ number, expectation, actual }) => `## ${number}. ${expectation}\n\n${stringifyEvidence(actual)}\n`).join("\n");
-      await writeFile(report, `# Base Sepolia two-hour live acceptance\n\nStatus **${status}**. Revision \`${commit}\`. Run \`${runId}\`.\n\n${state.requests}/${liveRequestLimit} reserved requests. Reported charges $${(state.billedUsdMicros / 1_000_000).toFixed(6)}. Unsettled requests ${state.unsettled}.\n\n${summary}\n[Event journal](./${journal.split("/").at(-1)})\n`, { mode: 0o600 });
+      const recovered = checkpoint ? `Step 1 and the test deposit were carried from the original stopped run (${checkpoint.sourceRun}). The following two-hour window started at Step 2. The prior two charges count toward the same ceiling.\n\n` : "";
+      await writeFile(report, `# Base Sepolia two-hour live acceptance\n\nStatus **${status}**. Revision \`${commit}\`. Run \`${runId}\`.\n\n${recovered}${state.requests}/${liveRequestLimit} reserved requests. Reported charges $${(state.billedUsdMicros / 1_000_000).toFixed(6)}. Unsettled requests ${state.unsettled}.\n\n${summary}\n[Event journal](./${journal.split("/").at(-1)})\n`, { mode: 0o600 });
       const dataFile = report.replace(/\.md$/, "-billing.json");
-      await writeFile(dataFile, stringifyEvidence({ state, charges: budget.rows() }) + "\n", { mode: 0o600 });
+      await writeFile(dataFile, stringifyEvidence({ state, priorCharges: budget.priorRows(), charges: budget.rows() }) + "\n", { mode: 0o600 });
       console.log(stringifyEvidence({ event: "report-saved", report, journal, billing: dataFile }));
     }
     budget?.close();

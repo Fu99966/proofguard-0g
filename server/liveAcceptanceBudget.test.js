@@ -55,3 +55,22 @@ it("rejects mismatched totals, unknown currencies, and token or price overruns",
   expect(() => validateLiveCharge(bill(bound, "bad", bound.input + 1), bound)).toThrow("reserved USD scope");
   expect(() => validateLiveCharge(bill(bound, "bad", 0, bound.output + 1), bound)).toThrow("reserved USD scope");
 });
+
+it("carries both previously reconciled charges across an authorized restart without resetting either cap", () => {
+  const budget = openLiveBudget(":memory:");
+  try {
+    const [flash, sia] = bounds;
+    budget.start("resumed", "commit", [
+      { id: "prior-flash", model: flash.model, total: 782, sourceRun: "stopped" },
+      { id: "prior-sia", model: sia.model, total: 7143, sourceRun: "stopped" },
+    ]);
+    expect(budget.state()).toMatchObject({ requests: 2, billedUsdMicros: 7925, unsettled: 0 });
+    expect(() => budget.reserve("over", bounds, pair + 7924)).toThrow("before dispatch");
+    for (let index = 0; index < 14; index++) {
+      budget.reserve(String(index), bounds);
+      for (const bound of bounds) budget.settle(String(index), bound.model, validateLiveCharge(bill(bound, `${index}-${bound.model}`, 0, 0), bound));
+    }
+    expect(() => budget.reserve("over-count", bounds)).toThrow("before dispatch");
+    expect(budget.state()).toMatchObject({ requests: 30, billedUsdMicros: 7925, unsettled: 0 });
+  } finally { budget.close(); }
+});

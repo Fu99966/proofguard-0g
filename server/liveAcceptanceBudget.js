@@ -82,6 +82,9 @@ export function openLiveBudget(database) {
   db.pragma("synchronous = FULL");
   db.exec(`
     CREATE TABLE IF NOT EXISTS live_run (id INTEGER PRIMARY KEY CHECK(id=1), run_id TEXT NOT NULL, commit_hash TEXT NOT NULL, fault TEXT);
+    CREATE TABLE IF NOT EXISTS live_prior_charges (
+      request_id TEXT PRIMARY KEY, model TEXT NOT NULL, billed_usd_micros INTEGER NOT NULL, source_run TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS live_reservations (
       proposal TEXT NOT NULL, model TEXT NOT NULL, reserved_usd_micros INTEGER NOT NULL,
       request_id TEXT UNIQUE, billed_usd_micros INTEGER, billing TEXT,
@@ -90,8 +93,26 @@ export function openLiveBudget(database) {
   `);
   const selectRun = db.prepare("SELECT run_id AS runId, commit_hash AS commitHash, fault FROM live_run WHERE id=1");
   const faults = db.prepare("UPDATE live_run SET fault=COALESCE(fault,?) WHERE id=1");
-  const totals = db.prepare(`SELECT COUNT(*) AS requests, COALESCE(SUM(COALESCE(billed_usd_micros,reserved_usd_micros)),0) AS committedUsdMicros,
-    COALESCE(SUM(billed_usd_micros),0) AS billedUsdMicros, COUNT(*)-COUNT(request_id) AS unsettled FROM live_reservations`);
+  const totals = db.prepare(`WITH bills AS (
+      SELECT request_id, billed_usd_micros, reserved_usd_micros FROM live_reservations
+      UNION ALL SELECT request_id, billed_usd_micros, billed_usd_micros FROM live_prior_charges
+    ) SELECT COUNT(*) AS requests, COALESCE(SUM(COALESCE(billed_usd_micros,reserved_usd_micros)),0) AS committedUsdMicros,
+    COALESCE(SUM(billed_usd_micros),0) AS billedUsdMicros, COUNT(*)-COUNT(request_id) AS unsettled FROM bills`);
+  const priorRequest = db.prepare("SELECT 1 FROM live_prior_charges WHERE request_id=?");
+  const startAtomically = db.transaction((runId, commitHash, priorCharges) => {
+    db.prepare("INSERT INTO live_run (id,run_id,commit_hash) VALUES (1,?,?)").run(runId, commitHash);
+    const insert = db.prepare("INSERT INTO live_prior_charges VALUES (?,?,?,?)");
+    for (const { id, model, total, sourceRun } of priorCharges) {
+      if (typeof id !== "string" || !id.trim() || !Object.hasOwn(pinned, model) || !Number.isSafeInteger(total) || total < 0 || !sourceRun) {
+        throw new LiveBudgetError("Invalid charge carried forward from the stopped run.");
+      }
+      insert.run(id, model, total, sourceRun);
+    }
+    const state = totals.get();
+    if (state.requests > liveRequestLimit || state.committedUsdMicros > liveUsdMicros) {
+      throw new LiveBudgetError("Carried charges exceed the original authorization.");
+    }
+  });
   const checkProposal = db.prepare("SELECT 1 FROM live_reservations WHERE proposal=?");
   const insert = db.prepare("INSERT INTO live_reservations(proposal,model,reserved_usd_micros) VALUES(?,?,?)");
   const update = db.prepare(`UPDATE live_reservations SET request_id=?,billed_usd_micros=?,billing=?
@@ -107,11 +128,12 @@ export function openLiveBudget(database) {
     for (const { model, usdMicros } of bounds) insert.run(proposal, model, usdMicros);
   });
   return {
-    start(runId, commitHash) {
-      db.prepare("INSERT INTO live_run (id,run_id,commit_hash) VALUES (1,?,?)").run(runId, commitHash);
+    start(runId, commitHash, priorCharges = []) {
+      startAtomically.immediate(runId, commitHash, priorCharges);
     },
     state() { return { ...selectRun.get(), ...totals.get() }; },
     rows() { return db.prepare("SELECT * FROM live_reservations ORDER BY rowid").all(); },
+    priorRows() { return db.prepare("SELECT * FROM live_prior_charges ORDER BY rowid").all(); },
     reserve(proposal, bounds, limit = liveUsdMicros) {
       if (bounds.length !== 2 || new Set(bounds.map(({ model }) => model)).size !== 2
         || !bounds.every(({ usdMicros }) => Number.isSafeInteger(usdMicros) && usdMicros > 0)
@@ -119,6 +141,7 @@ export function openLiveBudget(database) {
       reserveAtomically.immediate(proposal, bounds, limit);
     },
     settle(proposal, model, { id, total, raw, transportRequestId }) {
+      if (priorRequest.get(id)) throw new LiveBudgetError("A Router receipt repeats a previously settled request.");
       try {
         if (update.run(id, total, JSON.stringify({ ...raw, ...(transportRequestId && { transportRequestId }) }), proposal, model, total).changes === 1) return;
       } catch (error) {
