@@ -195,6 +195,9 @@ async function callReviewer({ memo, policy, facts, model, role }) {
   });
   const proof = body.proof ?? body.attestation ?? body.verification ?? null;
   const trace = body.x_0g_trace;
+  const billing = trace?.billing;
+  const charge = ["usd", "0g"].includes(billing?.currency) && typeof billing.total_cost === "string"
+    && /^\d{1,100}$/.test(billing.total_cost) ? { currency: billing.currency, totalUnits: billing.total_cost } : null;
   const verified = trace?.tee_verified === true;
   const verification = verified ? "router-verified" : trace?.tee_verified === false ? "failed" : "unavailable";
   const responseId = typeof body.id === "string" && body.id ? body.id : null;
@@ -206,6 +209,7 @@ async function callReviewer({ memo, policy, facts, model, role }) {
     model,
     latencyMs: Date.now() - startedAt,
     usage: body.usage || null,
+    charge,
     receipt: {
       kind: "0g-private-computer",
       verified,
