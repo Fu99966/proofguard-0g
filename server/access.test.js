@@ -255,7 +255,8 @@ it("blocks before Router fetch below the worst-case limit and stops before signi
       choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ decision: "ALLOW", riskScore: 1, summary: "Offline test",
         threats: [], confidence: 1 }) } }],
       x_0g_trace: { request_id: `test-${outbound}`, tee_verified: true,
-        billing: { currency: "usd", input_cost: "100", output_cost: "10", total_cost: inconsistent ? "111" : "110" } } });
+        billing: { currency: "usd", input_cost: "100", output_cost: "10", total_cost: inconsistent ? "111" : "110" } } },
+    { headers: { "X-Request-ID": `transport-${outbound}` } });
   });
   try {
     const { server, origin } = await start({ database, wallet: signer.address, issuerKey: signer.privateKey, guardAddress: signer.address,
@@ -269,6 +270,8 @@ it("blocks before Router fetch below the worst-case limit and stops before signi
     limit = 900_000;
     expect(await (await review(proposal)).json()).toMatchObject({ decision: "ALLOW", onchainPermit: expect.any(Object) });
     expect(budget.state()).toMatchObject({ billedUsdMicros: 220, unsettled: 0 });
+    expect(budget.rows().map(({ request_id, billing }) => [request_id, JSON.parse(billing).transportRequestId]))
+      .toEqual([["test-1", "transport-1"], ["test-2", "transport-2"]]);
     await close(server);
     const restarted = await start({ database, wallet: signer.address, issuerKey: signer.privateKey, guardAddress: signer.address,
       liveAcceptance: { bounds, usdLimit: () => limit }, marketFor: async () => ({ source: "fixture", usdMicros: { [baseSepolia.usdc]: "1000000" } }) });

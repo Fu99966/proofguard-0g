@@ -188,9 +188,7 @@ async function callReviewer({ memo, policy, facts, model, role, reservation }) {
     body = await response.json();
     if (reservation) {
       const charged = validateLiveCharge(body, reservation.bound);
-      const headerRequestId = response.headers.get("x-request-id");
-      if (headerRequestId && headerRequestId !== charged.id) throw new LiveBudgetError("Router response request IDs disagree.");
-      reservation.settle(model, charged);
+      reservation.settle(model, { ...charged, transportRequestId: response.headers.get("x-request-id") });
     }
     const choice = body.choices?.[0];
     if (choice?.finish_reason === "length") {
@@ -207,7 +205,7 @@ async function callReviewer({ memo, policy, facts, model, role, reservation }) {
   }
   const headerEvidence = {};
   response.headers.forEach((value, key) => {
-    if (key.startsWith("x-0g") || key.includes("attestation") || key.includes("proof")) headerEvidence[key] = value;
+    if (key === "x-request-id" || key.startsWith("x-0g") || key.includes("attestation") || key.includes("proof")) headerEvidence[key] = value;
   });
   const proof = body.proof ?? body.attestation ?? body.verification ?? null;
   const trace = body.x_0g_trace;

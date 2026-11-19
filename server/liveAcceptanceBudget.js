@@ -118,9 +118,9 @@ export function openLiveBudget(database) {
         || !Number.isSafeInteger(limit) || limit < 0 || limit > liveUsdMicros) throw new LiveBudgetError("Invalid live reservation bounds.");
       reserveAtomically.immediate(proposal, bounds, limit);
     },
-    settle(proposal, model, { id, total, raw }) {
+    settle(proposal, model, { id, total, raw, transportRequestId }) {
       try {
-        if (update.run(id, total, JSON.stringify(raw), proposal, model, total).changes === 1) return;
+        if (update.run(id, total, JSON.stringify({ ...raw, ...(transportRequestId && { transportRequestId }) }), proposal, model, total).changes === 1) return;
       } catch (error) {
         if (!String(error.code).startsWith("SQLITE_CONSTRAINT")) throw error;
       }
