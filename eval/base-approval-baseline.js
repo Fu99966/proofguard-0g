@@ -7,19 +7,33 @@ import { policy } from "../server/demoData.js";
 import { rpcProvider } from "../server/market.js";
 import { evaluatePolicy } from "../server/policyEngine.js";
 import { getZeroGConfig } from "../server/zeroGAdapter.js";
+import { scanBlockaidApproval } from "./blockaid-approvals.js";
 import { evaluateApprovalCommittee, summarizeApprovalCommittee } from "./approval-committee.js";
 
 const fixtureFile = await readFile(new URL("./cases/base-usdc-approvals.json", import.meta.url), "utf8");
 const fixture = JSON.parse(fixtureFile);
 const { values: options } = parseArgs({ options: { "committee-plan": { type: "boolean" }, "live-committee": { type: "boolean" },
-  "archived-goplus": { type: "string" }, "max-router-requests": { type: "string" }, journal: { type: "string" } } });
+  "archived-goplus": { type: "string" }, blockaid: { type: "boolean" }, "max-blockaid-scans": { type: "string" },
+  "max-router-requests": { type: "string" }, journal: { type: "string" } } });
 const live = options["live-committee"];
 const plan = options["committee-plan"];
 const cap = Number(options["max-router-requests"]);
 const plannedRequests = fixture.groups.reduce((count, group) => count + group.cases.length * 2, 0);
 const archivePath = options["archived-goplus"];
-const mode = live ? "live-committee" : plan ? "committee-plan" : archivePath ? "historical-comparison" : "deterministic-and-goplus";
-if ((live && plan) || (archivePath && (live || plan)) || (!live && (options.journal || options["max-router-requests"]))) throw new Error("Select one evaluation mode.");
+const blockaid = options.blockaid;
+const blockaidLimit = Number(options["max-blockaid-scans"]);
+const blockaidKey = process.env.BLOCKAID_CLIENT_API_KEY?.trim() || process.env.BLOCKAID_API_KEY?.trim();
+if (blockaid) {
+  if (!archivePath || live || plan || !Number.isSafeInteger(blockaidLimit) || blockaidLimit <= 0 || !options.journal) {
+    throw new Error("Use the archived GoPlus input, an explicit Blockaid scan cap, and a new journal for the approved comparison.");
+  }
+  if (!blockaidKey) throw new Error("Configure BLOCKAID_CLIENT_API_KEY for the approved Blockaid comparison.");
+} else if (options["max-blockaid-scans"] !== undefined) {
+  throw new Error("A Blockaid scan cap applies to the explicit Blockaid mode.");
+}
+const mode = live ? "live-committee" : plan ? "committee-plan" : blockaid ? "blockaid-comparison"
+  : archivePath ? "historical-comparison" : "deterministic-and-goplus";
+if ((live && plan) || (archivePath && (live || plan)) || (!live && options["max-router-requests"]) || (!live && !blockaid && options.journal)) throw new Error("Select one evaluation mode.");
 if (live) {
   if (!Number.isSafeInteger(cap) || cap < plannedRequests || !options.journal) {
     throw new Error(`The full approval evaluation requires an explicit cap of at least ${plannedRequests} Router requests and a new journal path.`);
@@ -141,6 +155,8 @@ async function scanWithGoPlus(proposal, amount) {
 const started = new Date();
 let journal;
 let reserved = 0;
+let blockaidScans = 0;
+let blockaidStopped;
 async function record(entry) {
   await journal.write(`${JSON.stringify(entry)}\n`);
   await journal.sync();
@@ -161,7 +177,10 @@ try {
     }
     controls.push({ ...group, expected, verified });
   }
-  if (live) {
+  if (blockaid) {
+    journal = await open(options.journal, "wx", 0o600);
+    await record({ event: "started", at: started.toISOString(), revision, workingTreeModified, fixtureSha256, blockaidLimit });
+  } else if (live) {
     journal = await open(options.journal, "wx", 0o600);
     await record({ event: "started", at: started.toISOString(), revision, workingTreeModified, fixtureSha256,
       cap, plannedRequests, models: getZeroGConfig().models });
@@ -189,6 +208,19 @@ try {
         evidence.goPlus = historical.archivedCases.get(item.hash);
         evidence.legacy = historical.judge(proposal, item.amount);
       } else if (!plan) evidence.goPlus = await scanWithGoPlus(proposal, item.amount);
+      if (blockaid) {
+        if (blockaidStopped || blockaidScans >= blockaidLimit) {
+          evidence.blockaid = { decision: "NOT_RUN", reason: blockaidStopped ?? "Authorized scan cap reached." };
+        } else {
+          blockaidScans++;
+          await record({ event: "blockaid-reserved", hash: item.hash, blockaidScans });
+          evidence.blockaid = await scanBlockaidApproval({ proposal, amount: item.amount, spender: fixture.spender,
+            minedBlock: item.block, apiKey: blockaidKey });
+          const { httpStatus } = evidence.blockaid;
+          if ([401, 402, 403, 429].includes(httpStatus)) blockaidStopped = `Vendor returned HTTP ${httpStatus}.`;
+        }
+        await record({ event: "blockaid-reviewed", hash: item.hash, ...evidence.blockaid });
+      }
       cases.push(evidence);
     }
     const blocked = cases.filter(({ proofGuard }) => proofGuard.decision === "BLOCK").length;
@@ -198,22 +230,29 @@ try {
     })) : null;
     const conclusive = cases.filter(({ goPlus }) => goPlus && goPlus.decision !== "INCONCLUSIVE").length;
     const flagged = cases.filter(({ goPlus }) => goPlus?.decision === "FLAG").length;
+    const blockaidMetrics = blockaid ? Object.fromEntries(["FLAG", "CLEAR", "INCONCLUSIVE", "NOT_RUN"].map((decision) => [
+      decision, cases.filter((item) => item.blockaid.decision === decision).length,
+    ])) : null;
     groups.push({ id, expected, labelReason, sampleSize: cases.length,
       proofGuard: { blocked, [expected === "BLOCK" ? "recall" : "falsePositiveRate"]: blocked / cases.length },
       ...(!plan && { goPlus: { simulatedWithMatchingAllowance: conclusive, flagged, inconclusive: cases.length - conclusive,
         flagRateAmongConclusive: conclusive ? flagged / conclusive : null } }),
       ...(legacy && { legacy }),
+      ...(blockaidMetrics && { blockaid: { ...blockaidMetrics,
+        flagRateAmongConclusive: (blockaidMetrics.FLAG + blockaidMetrics.CLEAR)
+          ? blockaidMetrics.FLAG / (blockaidMetrics.FLAG + blockaidMetrics.CLEAR) : null } }),
       ...(live && { committee: summarizeApprovalCommittee(cases, expected) }),
       cases });
   }
-  if (journal) await record({ event: "finished", reserved });
+  if (journal) await record({ event: "finished", reserved, ...(blockaid && { blockaidScans, blockaidStopped }) });
   console.log(JSON.stringify({
     scope: "Base mainnet bounded and unlimited USDC approval controls. GoPlus public risk flags use current state. No transaction signing or broadcasts.",
     mode, plannedRequests, routerRequestsReserved: reserved, models: getZeroGConfig().models,
+    ...(blockaid && { blockaidScans, blockaidLimit, blockaidStopped }),
     revision, workingTreeModified,
     ...(historical && { legacyRevision: historical.revision, goPlusMeasuredAt: historical.goPlusMeasuredAt,
       legacyInput: "Real receipt-derived facts projected into the historic self-reported schema. The aligned policy adds the USDC target and applies the same 1,000 USDC ceiling. No new GoPlus call.",
-      unavailable: { blockaid: "No authorized API credential or scan results for this dataset.", liveCommittee: "No authorized calls for this dataset." } }),
+      unavailable: { ...(!blockaid && { blockaid: "No Blockaid scan results for this dataset." }), liveCommittee: "No authorized calls for this dataset." } }),
     fixtureSha256,
     measuredAt: started.toISOString(), elapsedMs: Date.now() - started.getTime(),
     sampleSize: owners.size, groups,
