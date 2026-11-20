@@ -7,7 +7,7 @@
 - [x] T004A Verify the wallet's EIP-712 display with an interactive wallet (FR-003).
 - [x] T004B Verify GitHub Actions on the open draft pull request (FR-003).
 - [x] T005 Measure deterministic-policy recall and false-positive rate on the repeatable offline dataset (FR-006).
-- [ ] T005A Measure the live committee on independent, labeled cases and compare results with external baselines (FR-006).
+- [x] T005A Close the twenty-approval comparison with limitations. The operator excluded Blockaid and model calls for this round (FR-006).
 - [x] T005B Verify deterministic portfolio rules offline and report the independent visible-rule and blind dual-model evaluation (FR-009).
 - [x] T006 Build the SDK, custom calldata UI and full Base Sepolia trading Agent (FR-004, operator choice B).
 - [x] T007A Prove atomic worst-case reservations offline, then run and report the six ordered two-hour live checks on Base Sepolia (FR-007).
@@ -137,3 +137,22 @@ For T005A, `node eval/base-approval-baseline.js --archived-goplus var/evaluation
 The Blockaid baseline entry point is wired to the same twenty canonical receipts and existing GoPlus archive. It requests simulation and validation for the unsigned public transaction at the preceding Base block, records the vendor's verdict and request ID, and requires the exact Approval event before counting a result in rate denominators. Intra-block state changes can affect the simulated result. HTTP authorization, payment or rate-limit errors stop subsequent calls, and a new journal records each attempt. Offline fixtures verify the request and evidence contract. The live run still needs a Blockaid API credential and scan authorization. Use `node eval/base-approval-baseline.js --archived-goplus var/evaluation/base-approval-groups.json --blockaid --max-blockaid-scans 20 --journal <new-journal>` only for the separately authorized scan. No Blockaid or Router requests were made by the offline tests or credential preflight.
 
 For the final T005A comparison, `node eval/compare-approval-evidence.js --historical var/evaluation/base-approval-historical-comparison.json` produces the offline join. It supports independently recorded `--blockaid` and `--committee` report paths. It checks the same fixture hash, labeled groups, transaction hashes, mined blocks and approval amounts, compares policy outcomes, and excludes pending or inconclusive vendor entries from metric denominators. The checked current report preserves Blockaid and committee results as not run. The directly exercised join and rejection tests require no external service.
+
+
+## Evaluation closure and limitations
+
+**Project closeout status: complete with limitations, as directed by the operator.**
+
+On 2026-11-21 the operator closed the twenty-approval comparison as complete with limitations. The deterministic layer classified every case according to its label. The scope excludes the proposed forty model requests and Blockaid. Those results would not change the rule-layer finding for this cohort. Use `node eval/compare-approval-evidence.js --historical var/evaluation/base-approval-historical-comparison.json --close-round --markdown` to reproduce the closure report from the archived evidence.
+
+For the unlimited-approval group, the archived GoPlus adapter admitted only successful, non-reverted simulations with the expected maximum uint256 allowance in `erc20_allowance_changes`. The archived `flags` value was zero for each of the ten responses. It is the sum of the lengths of `flagged` and `suspicious_addresses`, so both arrays were empty. The archive supplies no internal GoPlus rationale for that result. [GoPlus response fields](https://docs.gopluslabs.io/reference/response-detail-copy-2)
+
+All correct blocks observed in the internal mandate comparison were already enforced by deterministic rules. There was no incremental correct model block on that evaluated set. The internal test does not measure the models' contribution on cases outside the current rule set. No synthetic performance figure is a public product claim.
+
+The original 24-hour criteria were replaced by the operator-approved split. Part A passed on Base Sepolia. Part B was terminated early at the operator's instruction, with neither a pass nor a fail. The next release gate for mainnet remains an independent contract audit.
+
+The public HTTP controls were verified locally on 2026-11-21. The patch moves authentication and relevant limits before body parsing, applies independent review and audit quotas, checks exact CORS configuration, and repairs the runtime image dependency layout. The public repository and connected deployment inventory exposed no verified service URL or revision. Hosted behavior remains outside this verification. [HTTP verification](../../.specify/bugs/public-http-controls/fix.md)
+
+The audit handoff pins the unchanged Guard source at `e0a03e0eb311ee692832c5c9e18c2beb8ee88a22`. It includes the audit scope, guard checks, threat model, known limitations, Foundry coverage, Slither results, deployed-bytecode reproduction and three potential providers. No provider was contacted. [Audit handoff](../../docs/audit/ProofGuardSafe-Audit-Scope.md)
+
+The follow-up semantic design records ten cases and their trusted evidence prerequisites. It did not run model requests or transactions. [Semantic case design](../../docs/plans/2026-11-21-semantic-review-cases.md)

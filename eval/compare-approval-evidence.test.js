@@ -51,3 +51,12 @@ it("rejects reused receipt IDs across two different committee cases", () => {
   }));
   expect(() => compareApprovalEvidence({ ...base, committee })).toThrow("Duplicate vendor request ID");
 });
+
+it("records an operator-closed evaluation separately from absent evidence", () => {
+  const closed = compareApprovalEvidence({ ...base, closeRound: true });
+  expect(closed).toMatchObject({ status: "complete-with-limitations", blockaidAssessment: "not-evaluated-this-round",
+    committeeAssessment: "not-evaluated-this-round" });
+  const inconsistent = structuredClone(historical);
+  inconsistent.groups[0].cases[0].proofGuard.decision = "BLOCK";
+  expect(() => compareApprovalEvidence({ ...base, historical: inconsistent, closeRound: true })).toThrow("closure reason");
+});

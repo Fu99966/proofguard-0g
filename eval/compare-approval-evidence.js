@@ -82,7 +82,8 @@ function summaryFor(cases, key) {
 const names = { current: "当前规则", legacyDefault: "旧版原策略", legacyAligned: "旧版对齐策略", goPlus: "GoPlus 公共风险",
   blockaid: "Blockaid 公共风险", committee: "双模型委员会" };
 
-export function compareApprovalEvidence({ fixture, digest, historical, blockaid, committee }) {
+export function compareApprovalEvidence({ fixture, digest, historical, blockaid, committee, closeRound = false }) {
+  if (closeRound && (blockaid || committee)) throw new Error("A skipped assessment cannot include vendor verdicts.");
   const old = indexReport(fixture, digest, historical, "historical-comparison");
   const vendor = blockaid && indexReport(fixture, digest, blockaid, "blockaid-comparison");
   const models = committee && indexReport(fixture, digest, committee, "live-committee");
@@ -109,7 +110,13 @@ export function compareApprovalEvidence({ fixture, digest, historical, blockaid,
     return { id, expected, sampleSize: cases.length, summaries: Object.fromEntries(Object.keys(names).map((key) =>
       [key, summaryFor(cases, key)])), cases };
   });
-  return { fixtureSha256: digest, groups, sources: { historical: historical.revision, legacy: historical.legacyRevision,
+  if (closeRound && groups.some(({ cases }) => cases.some(({ current, expected }) => current !== expected))) {
+    throw new Error("The stated closure reason requires every current rule decision to match its label.");
+  }
+  return { fixtureSha256: digest, groups, ...(closeRound && { status: "complete-with-limitations",
+    blockaidAssessment: "not-evaluated-this-round", committeeAssessment: "not-evaluated-this-round",
+    reason: "The rule layer classified every sample as expected; external verdicts would not change that finding." }),
+    sources: { historical: historical.revision, legacy: historical.legacyRevision,
     goPlusMeasuredAt: historical.goPlusMeasuredAt, blockaid: blockaid?.revision ?? null, committee: committee?.revision ?? null },
     requestsMade: 0 };
 }
@@ -122,18 +129,26 @@ function markdown(result) {
     ...(inconclusive ? [`${inconclusive} 条证据不足`] : []),
     ...(notRun ? [`${notRun} 条未评测`] : []),
   ].join("，");
-  const lines = Object.entries(names).map(([key, name]) =>
-    `| ${name} | ${label(bounded.summaries[key])} | ${label(unlimited.summaries[key])} |`);
+  const closed = result.status === "complete-with-limitations";
+  const lines = Object.entries(names).map(([key, name]) => {
+    if (closed && ["blockaid", "committee"].includes(key)) return `| ${name} | 本轮不评测 | 本轮不评测 |`;
+    return `| ${name} | ${label(bounded.summaries[key])} | ${label(unlimited.summaries[key])} |`;
+  });
   return [
     "# 真实 USDC 授权 · 同批基线对照",
     "",
+    ...(closed ? ["**完成，附限制说明。** 确定性规则已正确分类全部 20 笔。本轮不做 Blockaid 和双模型评测，额外结果不会改变这批样本的规则层结论。", ""] : []),
     "同一批 20 笔 Base 历史交易，按本项目的 Permit2 白名单和 1,000 USDC 额度标注。第三方数字为公共风险标记，同表展示其与本地标签的一致程度。",
     "",
     "| 方法 | 限额内组拦截或标记 | 无限授权组拦截或标记 |",
     "| --- | ---: | ---: |",
     ...lines,
     "",
-    "回执不足和未评测的样本保留在报告中，分母只纳入可验证结果。此次汇总使用零次新 API 请求。",
+    ...(closed ? [
+      "无限授权组的 10 笔 GoPlus 归档结果均通过了成功模拟与授权匹配检查，对应 `is_simulated: true`、`is_revert: false`，且 `erc20_allowance_changes` 包含与链上样本一致的最大 uint256 授权。归档每笔的 `flags` 为 0，它按 `flagged.length + suspicious_addresses.length` 计算，因此两个数组都为空。GoPlus 返回了授权变更，两个风险数组没有条目。归档没有提供 GoPlus 内部为什么未触发风险标记的理由。 [GoPlus 响应字段](https://docs.gopluslabs.io/reference/response-detail-copy-2)",
+      "",
+    ] : ["回执不足和未评测的样本保留在报告中，分母只纳入可验证结果。", ""]),
+    "此次汇总使用零次新 API 请求。",
     "",
     "[逐笔 JSON](./base-approval-comparison.json)",
     "",
@@ -142,12 +157,12 @@ function markdown(result) {
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const { values: args } = parseArgs({ options: { historical: { type: "string" }, blockaid: { type: "string" },
-    committee: { type: "string" }, markdown: { type: "boolean" } } });
+    committee: { type: "string" }, "close-round": { type: "boolean" }, markdown: { type: "boolean" } } });
   if (!args.historical) throw new Error("Provide the historical comparison JSON archive.");
   const load = async (path) => path && JSON.parse(await readFile(path, "utf8"));
   const [data, historical, blockaid, committee] = await Promise.all([readFile(new URL("./cases/base-usdc-approvals.json", import.meta.url)),
     load(args.historical), load(args.blockaid), load(args.committee)]);
   const result = compareApprovalEvidence({ fixture: JSON.parse(data), digest: createHash("sha256").update(data).digest("hex"),
-    historical, blockaid, committee });
+    historical, blockaid, committee, closeRound: args["close-round"] });
   console.log(args.markdown ? markdown(result) : JSON.stringify(result, null, 2));
 }
