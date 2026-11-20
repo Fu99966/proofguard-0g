@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { open, readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { Interface, MaxUint256, toQuantity } from "ethers";
+import { formatUnits, Interface, MaxUint256, toQuantity } from "ethers";
 import { policy } from "../server/demoData.js";
 import { rpcProvider } from "../server/market.js";
 import { evaluatePolicy } from "../server/policyEngine.js";
@@ -12,13 +12,14 @@ import { evaluateApprovalCommittee, summarizeApprovalCommittee } from "./approva
 const fixtureFile = await readFile(new URL("./cases/base-usdc-approvals.json", import.meta.url), "utf8");
 const fixture = JSON.parse(fixtureFile);
 const { values: options } = parseArgs({ options: { "committee-plan": { type: "boolean" }, "live-committee": { type: "boolean" },
-  "max-router-requests": { type: "string" }, journal: { type: "string" } } });
+  "archived-goplus": { type: "string" }, "max-router-requests": { type: "string" }, journal: { type: "string" } } });
 const live = options["live-committee"];
 const plan = options["committee-plan"];
 const cap = Number(options["max-router-requests"]);
 const plannedRequests = fixture.groups.reduce((count, group) => count + group.cases.length * 2, 0);
-const mode = live ? "live-committee" : plan ? "committee-plan" : "deterministic-and-goplus";
-if ((live && plan) || (!live && (options.journal || options["max-router-requests"]))) throw new Error("Select one evaluation mode.");
+const archivePath = options["archived-goplus"];
+const mode = live ? "live-committee" : plan ? "committee-plan" : archivePath ? "historical-comparison" : "deterministic-and-goplus";
+if ((live && plan) || (archivePath && (live || plan)) || (!live && (options.journal || options["max-router-requests"]))) throw new Error("Select one evaluation mode.");
 if (live) {
   if (!Number.isSafeInteger(cap) || cap < plannedRequests || !options.journal) {
     throw new Error(`The full approval evaluation requires an explicit cap of at least ${plannedRequests} Router requests and a new journal path.`);
@@ -33,6 +34,47 @@ const fixtureSha256 = createHash("sha256").update(fixtureFile).digest("hex");
 const gitOptions = { cwd: new URL("../", import.meta.url), encoding: "utf8" };
 const revision = execFileSync("git", ["rev-parse", "HEAD"], gitOptions).trim();
 const workingTreeModified = Boolean(execFileSync("git", ["status", "--porcelain"], gitOptions).trim());
+const legacyRevision = "22152a0a1d8f1bb7267a9f8958e8c427c184d277";
+
+async function loadHistoricalBaseline() {
+  const archive = JSON.parse(await readFile(archivePath, "utf8"));
+  if (archive.fixtureSha256 !== fixtureSha256 || !Array.isArray(archive.groups) || archive.groups.length !== fixture.groups.length) {
+    throw new Error("The archived GoPlus report does not correspond to the fixture.");
+  }
+  const archivedCases = new Map();
+  for (const group of fixture.groups) {
+    const source = archive.groups.find(({ id, expected }) => id === group.id && expected === group.expected);
+    if (!source || source.cases.length !== group.cases.length) throw new Error(`The archive does not cover ${group.id}.`);
+    const indexed = new Map(source.cases.map((item) => [item.hash, item]));
+    for (const { hash, block, amount } of group.cases) {
+      const item = indexed.get(hash);
+      if (item?.block !== block || item.amount !== amount || !["CLEAR", "FLAG", "INCONCLUSIVE"].includes(item.goPlus?.decision)
+        || archivedCases.has(hash)) throw new Error(`Invalid archived evidence for ${hash}.`);
+      archivedCases.set(hash, item.goPlus);
+    }
+  }
+  const historicalModule = (path) => {
+    const source = execFileSync("git", ["show", `${legacyRevision}:${path}`], gitOptions);
+    return import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+  };
+  const [{ policy: historicalPolicy }, { evaluatePolicy: historicalJudge, isTransactionProposal }] = await Promise.all([
+    historicalModule("server/demoData.js"), historicalModule("server/policyEngine.js"),
+  ]);
+  const aligned = { ...historicalPolicy, allowedTargets: [fixture.token], maxApprovalUsd: 1_000 };
+  function judge(proposal, amount, policyToUse) {
+    const legacyProposal = { chainId: proposal.chainId, from: proposal.from, target: proposal.to, calldata: proposal.data,
+      method: "approve(address,uint256)", assetIn: "USDC", assetOut: "USDC", valueUsd: 0, slippageBps: 0,
+      approvalUsd: Number(formatUnits(amount, 6)) };
+    if (!isTransactionProposal(legacyProposal)) throw new Error("The receipt-derived proposal does not match the historic schema.");
+    const result = historicalJudge(legacyProposal, policyToUse);
+    return { decision: result.passed ? "ALLOW" : "BLOCK", blockers: result.blockers };
+  }
+  return { revision: legacyRevision, goPlusMeasuredAt: archive.measuredAt, archivedCases,
+    judge(proposal, amount) {
+      return { defaultPolicy: judge(proposal, amount, historicalPolicy), alignedPolicy: judge(proposal, amount, aligned) };
+    } };
+}
+const historical = archivePath ? await loadHistoricalBaseline() : null;
 const token = new Interface([
   "function approve(address spender,uint256 amount)",
   "event Approval(address indexed owner,address indexed spender,uint256 value)",
@@ -143,16 +185,24 @@ try {
         evidence.committee = await evaluateApprovalCommittee({ transaction: proposal, policy: casePolicy, deterministic: verdict, startedAt });
         await record({ event: "reviewed", ...evidence });
       }
-      if (!plan) evidence.goPlus = await scanWithGoPlus(proposal, item.amount);
+      if (historical) {
+        evidence.goPlus = historical.archivedCases.get(item.hash);
+        evidence.legacy = historical.judge(proposal, item.amount);
+      } else if (!plan) evidence.goPlus = await scanWithGoPlus(proposal, item.amount);
       cases.push(evidence);
     }
     const blocked = cases.filter(({ proofGuard }) => proofGuard.decision === "BLOCK").length;
+    const legacy = historical ? Object.fromEntries(["defaultPolicy", "alignedPolicy"].map((key) => {
+      const count = cases.filter((item) => item.legacy[key].decision === "BLOCK").length;
+      return [key, { blocked: count, [expected === "BLOCK" ? "recall" : "falsePositiveRate"]: count / cases.length }];
+    })) : null;
     const conclusive = cases.filter(({ goPlus }) => goPlus && goPlus.decision !== "INCONCLUSIVE").length;
     const flagged = cases.filter(({ goPlus }) => goPlus?.decision === "FLAG").length;
     groups.push({ id, expected, labelReason, sampleSize: cases.length,
       proofGuard: { blocked, [expected === "BLOCK" ? "recall" : "falsePositiveRate"]: blocked / cases.length },
       ...(!plan && { goPlus: { simulatedWithMatchingAllowance: conclusive, flagged, inconclusive: cases.length - conclusive,
         flagRateAmongConclusive: conclusive ? flagged / conclusive : null } }),
+      ...(legacy && { legacy }),
       ...(live && { committee: summarizeApprovalCommittee(cases, expected) }),
       cases });
   }
@@ -161,6 +211,9 @@ try {
     scope: "Base mainnet bounded and unlimited USDC approval controls. GoPlus public risk flags use current state. No transaction signing or broadcasts.",
     mode, plannedRequests, routerRequestsReserved: reserved, models: getZeroGConfig().models,
     revision, workingTreeModified,
+    ...(historical && { legacyRevision: historical.revision, goPlusMeasuredAt: historical.goPlusMeasuredAt,
+      legacyInput: "Real receipt-derived facts projected into the historic self-reported schema. The aligned policy adds the USDC target and applies the same 1,000 USDC ceiling. No new GoPlus call.",
+      unavailable: { blockaid: "No authorized API credential or scan results for this dataset.", liveCommittee: "No authorized calls for this dataset." } }),
     fixtureSha256,
     measuredAt: started.toISOString(), elapsedMs: Date.now() - started.getTime(),
     sampleSize: owners.size, groups,
