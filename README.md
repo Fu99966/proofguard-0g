@@ -3,10 +3,8 @@
 **Current release target: Base Sepolia testnet. Do not use mainnet funds.**
 
 > **A verifiable AI transaction firewall for autonomous onchain agents.**
->
-> 让第二个可信大脑，拦在交易之前。
 
-ProofGuard reviews transaction proposals submitted by an AI agent before execution. A **two-model 0G Private Computer committee** and deterministic owner policy must all approve to issue a short-lived permit for the included execution simulator.
+ProofGuard applies deterministic owner policy to decoded EVM transaction proposals and binds approved proposals to short-lived, one-time permits. Live review also requires two 0G Private Computer verdicts and Router confirmation of both TEE signatures. Browser presets use a local simulator. The Base Sepolia Agent can submit qualifying transactions through a Safe Guard.
 
 **Hackathon track:** Build with 0G Private Computer · 0G Labs
 
@@ -16,27 +14,20 @@ ProofGuard reviews transaction proposals submitted by an AI agent before executi
 
 ## Why ProofGuard
 
-Giving an autonomous agent a wallet creates a dangerous gap between intent and execution:
+Deterministic policy checks the registered wallet, decoded transaction effects, recipient, spending and approval limits, quote and slippage evidence, and the configured Base Sepolia portfolio mandate. A failing rule prevents permit issuance.
 
-- A malicious tool response can inject instructions into the agent context.
-- A model can approve an unknown contract, excessive slippage, or unlimited token approval.
-- A centralized reviewer sees private positions and cannot prove which model ran.
-- A model-only guardrail remains probabilistic and can be persuaded to ignore policy.
+The live 0G integration records separate semantic and red-team verdicts for the same transaction. A veto, incomplete verdict, unavailable reviewer, or missing Router confirmation prevents issuance.
 
-ProofGuard closes that gap with three independent votes:
+## Evaluation evidence
 
-1. **0G semantic judge** understands intent, adversarial instructions, and ambiguous transaction context inside a TEE.
-2. **0G SIA red-team critic** independently searches for hidden execution risk and reasons the first reviewer could be wrong.
-3. **Deterministic owner policy** enforces non-negotiable limits for chain, target, asset, value, slippage, approval, and prompt injection.
-
-Unanimous `ALLOW` produces a scoped, expiring, one-time permit. Any rejection, timeout, malformed response, or unavailable reviewer produces no permit. In live mode, the Router must also confirm both TEE signatures.
+The deterministic rules correctly classified the tested approval cohort and the internal portfolio-mandate controls. All evaluated cases that warranted a block were already caught by the rule layer. Neither model produced an additional correct block in the evaluated samples. The approval comparison excluded model calls by design. Incremental detection on cases outside the current rules remains unevaluated. [Evaluation record](specs/002-project-completeness/tasks.md#evaluation-closure-and-limitations)
 
 ## Track compliance
 
 | Track requirement | ProofGuard evidence |
 |---|---|
 | Official 0G Compute API | Server-side calls to `https://router-api.0g.ai/v1/chat/completions` |
-| At least one 0G model | Two distinct models are called through 0G Private Computer for every live review |
+| At least one 0G model | The live review path requests two distinct model verdicts through 0G Private Computer |
 | Verifiable inference | The Router checks both TEE signatures on request; per-reviewer IDs and evidence are preserved for follow-up verification |
 | Web3 + AI | Autonomous EVM transaction firewall, wallet countersignature, scoped one-time permit |
 | Runnable demo | React Web App + Express Agent API; tests and production build included |
@@ -45,9 +36,8 @@ Unanimous `ALLOW` produces a scoped, expiring, one-time permit. Any rejection, t
 ## Demo capabilities
 
 - Four one-click scenarios: safe swap, prompt injection, unlimited approval, and slippage spike
-- Parallel live calls to two 0G in-house models through the OpenAI-compatible 0G Router
-- Per-request `X-0G-Provider-Trust-Mode: private`
-- Seven deterministic policy checks with fail-closed behavior
+- Deterministic policy checks and fail-closed permit issuance in the local demo
+- A separate authenticated live review path that requests two verdicts using `X-0G-Provider-Trust-Mode: private`
 - Three independent commitments: transaction, owner policy, and inference response
 - Tamper challenge that modifies one byte and demonstrates commitment mismatch
 - Optional EVM wallet connection and EIP-712 typed-data signature by the configured policy owner
@@ -60,24 +50,23 @@ Unanimous `ALLOW` produces a scoped, expiring, one-time permit. Any rejection, t
 ```mermaid
 flowchart LR
     A["Autonomous agent"] -->|proposed EVM transaction| I["ProofGuard interceptor"]
-    I --> D["Deterministic pre-scan"]
-    I --> Z1["GLM-5.3-Flash semantic judge"]
-    I --> Z2["0GM-SIA red-team critic"]
+    I --> D["Decode and check deterministically"]
+    D -->|decoded facts| Z1["GLM-5.3-Flash live review"]
+    D -->|decoded facts| Z2["0GM-SIA live review"]
     D --> C["Decision compiler"]
     Z1 -->|private verdict + evidence| C
     Z2 -->|private verdict + evidence| C
-    C -->|three unanimous votes| P["Scoped execution permit"]
-    C -->|either blocks| B["Transaction rejected"]
-    P --> W["Owner wallet signature"]
-    W --> E["Execution adapter"]
-    E --> R["Commitments + receipt"]
+    C -->|policy and both reviews allow| P["Scoped execution permit"]
+    C -->|rule, veto, or evidence failure| B["Transaction rejected"]
+    P --> E["Base Sepolia Safe Guard or local simulator"]
+    E --> R["Commitments and receipt"]
 ```
 
-No model has unilateral execution authority. The committee compiler blocks when either reviewer rejects or fails, and the policy engine can still block even when both models return `ALLOW`.
+The rule layer has an independent veto. Successful live execution uses a Permit bound to the exact proposal and checks that Permit at the Safe Guard.
 
 ## 0G Private Computer integration
 
-The server calls the official OpenAI-compatible Router and keeps the API key out of the browser. In live committee mode it sends the same isolated transaction context to both configured 0G models:
+The server calls the official OpenAI-compatible Router and keeps the API key out of the browser. Both live reviewers receive the decoded effects, owner mandate and untrusted proposal memo. The production review omits the deterministic verdict. The request shape is shown below.
 
 ```js
 const response = await fetch("https://router-api.0g.ai/v1/chat/completions", {
@@ -137,11 +126,11 @@ PORT=8787
 ```
 
 4. Restart `npm run dev`.
-5. The The `/api/health` mode indicates server configuration. The public browser scenarios always use local simulation. Run the two synthetic scenarios with `npm run smoke:0g` when you are ready to make four billable Router calls. The command fails unless the safe swap yields `ALLOW`, the injection scenario yields `BLOCK`, and both have two confirmed TEE results and trace identifiers. Compare request IDs with the 0G usage dashboard. The smoke prints Router verification separately from independent verification.
+5. The `/api/health` mode indicates server configuration. The public browser scenarios always use local simulation. Run the two synthetic scenarios with `npm run smoke:0g` when you are ready to make four billable Router calls. The command fails unless the safe swap yields `ALLOW`, the injection scenario yields `BLOCK`, and both have two confirmed TEE results and trace identifiers. Compare request IDs with the 0G usage dashboard. The smoke prints Router verification separately from independent verification.
 
 ### Model selection and verification
 
-Before the calldata and mandate update, the default pair passed the live safe-swap and injection scenarios with four confirmed Router TEE verification results in Private/TeeML mode. This verifies enclave execution and Router confirmation for the tested routes. It does not establish end-to-end encrypted transit for the default primary.
+The recorded live smoke test exercised safe-swap and injection scenarios and collected four Router-confirmed TEE verdicts in Private/TeeML mode. This evidence covers receipt verification on the tested routes. The evaluation record reports detection results separately.
 
 If an existing `.env` still names `0gm-1.0-35b-a3b` as the primary, set `ZERO_G_MODEL=glm-5.3-flash` or remove that override to use the new default. The older primary remains selectable. Its Encrypted Transit route omitted the Router's per-response `tee_verified` flag in the recorded tests. 0G describes how the encrypted gateway performs that check, and ProofGuard keeps permits blocked when the Router does not confirm both verdicts. [0G's explanation](https://0g.ai/blog/data-privacy-on-0g-private-computer#audit-it-then-verify-it)
 
@@ -156,8 +145,8 @@ Open [http://localhost:8787](http://localhost:8787).
 
 ## Demo flow
 
-1. Run **正常换仓 / SAFE SWAP** and show both 0G models plus the deterministic gate issuing an `ALLOW` permit.
-2. Run **提示词注入 / INJECTION** and show the hostile memo being treated as untrusted data and blocked.
+1. Run **正常换仓 / SAFE SWAP** and inspect the rule verdict, simulated reviewer results and demo permit.
+2. Run **提示词注入 / INJECTION** and inspect the deterministic rejection.
 3. Click **模拟篡改响应**; a one-byte change produces `COMMITMENT MISMATCH`.
 4. Open **证据室** to show transaction, policy, and inference commitments.
 5. To try optional simulated execution, set `PROOFGUARD_OWNER_ADDRESS` to the **public address** of a disposable EVM wallet you control and restart the server. Review again, connect the configured wallet and sign the EIP-712 permit fields. The wallet shows the target, value, and deadline. The server verifies the signer and consumes the permit once. Review and commitment checks work without a wallet.
@@ -166,9 +155,9 @@ The complete 2–3 minute narration and shot list are in [docs/hackathon/DEMO_SC
 
 ## Attack scenarios
 
-| Scenario | What ProofGuard detects | Expected result |
+| Scenario | Deterministic policy result | Expected decision |
 |---|---|---|
-| Safe swap | Approved target, assets, value, and 0.4% slippage | `ALLOW` |
+| Safe swap | Approved target, assets, value, and slippage within the limit | `ALLOW` |
 | Prompt injection | Instruction injection and an unapproved payout address | `BLOCK` |
 | Unlimited approval | ERC-20 approval larger than owner policy | `BLOCK` |
 | Slippage spike | 9.8% slippage against a 0.75% maximum | `BLOCK` |
@@ -196,7 +185,7 @@ For independent verification, start with each reviewer's `provider`, `chatId`, m
 | `POST` | `/api/verify-commitment` | Detect response or transaction tampering |
 | `POST` | `/api/execute` | Verify the configured owner signature, permit expiry, exact proposal and one-time use |
 
-Configure `PROOFGUARD_API_KEY_HASHES` with SHA-256 digests of random Agent keys, then send the original key as `Authorization: Bearer …`. Only the digest belongs on the server. Configure `PROOFGUARD_FRONTEND_ORIGINS` for separate frontend origins. Same-origin requests work with the built-in server.
+Configure `PROOFGUARD_API_KEY_HASHES` with SHA-256 digests of random Agent keys, then send the original key as `Authorization: Bearer …`. Only the digest belongs on the server. Configure `PROOFGUARD_FRONTEND_ORIGINS` with exact origins for separate frontends and the browser-facing HTTPS origin when TLS terminates at an ingress. The built-in server also accepts direct same-origin browser requests. Review and audit default to 30 and 60 requests per minute per Agent key, respectively. Limits are local to each API process.
 
 Submit an EVM transaction as `{ "transaction": { "chainId": 84532, "from": "0x…", "to": "0x…", "value": "0", "data": "0x…" } }`. `value` is a string in wei. The API decodes effects from calldata and independently checks the chain, sender, asset addresses, recipient, spend limit and minimum output. Optional legacy display claims must agree with decoded facts. Configure a trusted market source to approve custom proposals requiring valuation. The preset `/api/demo/review` accepts only a `scenarioId` and never sends requests to 0G.
 
@@ -215,7 +204,7 @@ npm run build
 
 The tests exercise the four demo scenarios, live Router response fixtures, no-key and force-demo behavior, invalid input, signer binding, expiration, concurrent reuse and commitment recomputation. Fixtures keep the test suite offline and do not establish live 0G acceptance.
 
-`node eval/base-approval-baseline.js --committee-plan` verifies the 20 mined approval controls and prints the proposed Router request count without inference. The default mode compares the rule layer with GoPlus. The separate live mode and its report fields are documented in the [evaluation record](specs/002-project-completeness/tasks.md#live-approval-committee-evaluation).
+The completed approval comparison covers deterministic policy, historical policy and archived GoPlus simulation signals. The approval cohort did not use Blockaid or model inference. The separate internal mandate evaluation found no incremental model blocks on rule-covered cases. [Evaluation record](specs/002-project-completeness/tasks.md#evaluation-closure-and-limitations)
 
 ## Repository map
 
@@ -252,9 +241,9 @@ The [treasury agent runbook](examples/rebalancer/README.md) covers the JavaScrip
 
 ## Roadmap
 
-1. Complete the public Base Sepolia deployment and 24-hour observation.
-2. Expand onchain receiver and balance checks and evaluate the live committee on an independent dataset.
-3. Commission a third-party contract audit before any mainnet launch.
+1. Maintain the Base Sepolia-only deployment and record testnet acceptance outcomes.
+2. Define a separate evaluation for semantic judgments outside the current rule set.
+3. Complete a third-party contract audit before any mainnet launch.
 
 ## Documentation and Sponsor resources
 
