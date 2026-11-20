@@ -16,6 +16,10 @@
 - [x] T008 Implement and verify the Safe Guard, restricted role, typed issuer and balance simulation on a local Base Sepolia fork (FR-005).
 - [x] T008A Deploy an isolated public Base Sepolia Safe and check that a transaction missing a valid permit reverts there (FR-005).
 - [ ] T009 Obtain an independent contract audit before any mainnet release (FR-005).
+- [ ] T010 Verify the no-key Permit path, dual-model opt-in and mode commitments (FR-010).
+- [ ] T011 Verify clean local installation, loopback listener and package exclusions (FR-011).
+- [x] T012 Draft on-demand document review for Owner confirmation (FR-012).
+- [ ] T013 Freeze Guard code plus audit tests and archive compiler, fork, coverage and invariant evidence (FR-013).
 
 ## Acceptance recorded 2026-11-18
 
@@ -38,7 +42,7 @@ A read-only Base Sepolia preflight at block `60453350` used a hypothetical seed 
 
 The funding transaction `0xe76612a56bde3148249a2753bddbeda54d15187c896bb9d450c9adf95729d5bd` successfully transferred 20 test USDC to the dedicated address on Ethereum Sepolia (11155111). A later [Base Sepolia transfer](https://sepolia.basescan.org/tx/0x6bd8633e807100a19c81cbcc0fed3c73b1f10fefd92cd90fa584a5a71453f4db) credited 20 test USDC to the same address at block `60480328`. The Base Sepolia balance was 20 test USDC and zero test ETH at block `60481459`. The acceptance launcher defaults to a read-only check, starts only with Base Sepolia funding, and uses a persistent 12-request cap for this test run.
 
-The existing Cloud Run service URL and deployment credentials were unavailable in this workspace. No deployment action was recorded. The public demo route in the new implementation uses local simulated reviews even when the authenticated Agent route is configured with a 0G key.
+The operator selected local installation. Public deployment security is not applicable. Docker and Cloud Run are optional and are not recommended for the local installation. The preset route uses only local rules and fixed market data regardless of Agent review mode.
 
 A clean Node 22.23.5 install passed 51 JavaScript and HTTP tests, seven Foundry tests, and the production build. The production dependency audit reported zero findings. The full development dependency audit still reports findings.
 
@@ -141,7 +145,7 @@ For the final T005A comparison, `node eval/compare-approval-evidence.js --histor
 
 ## Evaluation closure and limitations
 
-**Project closeout status: complete with limitations, as directed by the operator.**
+**Approval comparison status: complete with limitations.** The application and audit preparation continue under T010–T013.
 
 On 2026-11-21 the operator closed the twenty-approval comparison as complete with limitations. The deterministic layer classified every case according to its label. The scope excludes the proposed forty model requests and Blockaid. Those results would not change the rule-layer finding for this cohort. Use `node eval/compare-approval-evidence.js --historical var/evaluation/base-approval-historical-comparison.json --close-round --markdown` to reproduce the closure report from the archived evidence.
 
@@ -151,8 +155,10 @@ All correct blocks observed in the internal mandate comparison were already enfo
 
 The original 24-hour criteria were replaced by the operator-approved split. Part A passed on Base Sepolia. Part B was terminated early at the operator's instruction, with neither a pass nor a fail. The next release gate for mainnet remains an independent contract audit.
 
-The public HTTP controls were verified locally on 2026-11-21. The patch moves authentication and relevant limits before body parsing, applies independent review and audit quotas, checks exact CORS configuration, and repairs the runtime image dependency layout. The public repository and connected deployment inventory exposed no verified service URL or revision. Hosted behavior remains outside this verification. [HTTP verification](../../.specify/bugs/public-http-controls/fix.md)
+HTTP controls were verified locally on 2026-11-21. Authentication and relevant limits apply before body parsing, review and audit have independent quotas, and CORS checks exact configured origins. Public deployment security is not applicable because the operator chose local installation. [HTTP verification](../../.specify/bugs/public-http-controls/fix.md)
 
 The audit handoff pins the unchanged Guard source at `e0a03e0eb311ee692832c5c9e18c2beb8ee88a22`. It includes the audit scope, guard checks, threat model, known limitations, Foundry coverage, Slither results, deployed-bytecode reproduction and three potential providers. No provider was contacted. [Audit handoff](../../docs/audit/ProofGuardSafe-Audit-Scope.md)
 
 The follow-up semantic design records ten cases and their trusted evidence prerequisites. It did not run model requests or transactions. [Semantic case design](../../docs/plans/2026-11-21-semantic-review-cases.md)
+
+The separate document-triggered review design specifies when two models are called, Owner approval, evidence integrity and injection defenses. Implementation awaits operator confirmation. [On-demand document review](../../docs/plans/on-demand-document-review.md)
