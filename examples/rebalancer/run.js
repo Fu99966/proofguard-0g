@@ -30,7 +30,7 @@ const baseChain = BigInt(baseSepolia.chainId);
 if ((await provider.getNetwork()).chainId !== baseChain || (await simulationProvider.getNetwork()).chainId !== baseChain) {
   throw new Error("Trading and simulation RPCs must both be Base Sepolia.");
 }
-const market = chainlinkMarket({ rpc, ethFeed: env.PROOFGUARD_ETH_USD_FEED, usdcFeed: env.PROOFGUARD_USDC_USD_FEED });
+const market = chainlinkMarket({ rpc, ethFeed: env.PROOFGUARD_ETH_USD_FEED || undefined, usdcFeed: env.PROOFGUARD_USDC_USD_FEED });
 const abi = AbiCoder.defaultAbiCoder();
 const tokenAbi = ["function balanceOf(address account) view returns(uint256)",
   "function allowance(address owner,address spender) view returns(uint256)", "function approve(address spender,uint256 amount)"];
@@ -131,7 +131,7 @@ async function tick() {
   await submit(proposal(baseSepolia.router, data, "Rebalance toward 40% ETH exposure under the operator mandate."), { ...trade, minOut });
   if (!once && !rejectionRecorded) {
     reviewAttemptsInCycle += 1;
-    await record(await checkRecipientRejection(client, safe));
+    await record(await checkRecipientRejection(client, safe, { requireModels: false }));
     rejectionRecorded = true;
   }
 }

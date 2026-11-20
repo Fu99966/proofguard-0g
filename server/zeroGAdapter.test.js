@@ -112,7 +112,8 @@ describe("0G adapter", () => {
     const inference = await reviewWithZeroG({ transaction, policy, deterministic });
     expect(router).toHaveBeenCalledTimes(2);
     expect(inference.decision).toBe(decision);
-    expect(Boolean(issuePermit({ transaction, policy, deterministic, inference, now: recordedAt }))).toBe(decision === "ALLOW");
+    expect(Boolean(issuePermit({ transaction, policy, deterministic, inference, reviewMode: "rules-plus-models",
+      now: recordedAt }))).toBe(decision === "ALLOW");
   });
 });
 

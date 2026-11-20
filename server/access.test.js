@@ -57,12 +57,12 @@ it("restricts paid reviews by key and browser origin while keeping the preset de
     return realFetch(url, init);
   });
   vi.stubGlobal("fetch", fakeRouter);
-  const { origin } = await start({ frontendOrigins: ["https://proofguard.example"] });
+  const { origin } = await start({ frontendOrigins: ["https://proofguard.example"], reviewMode: "rules-plus-models" });
   expect((await post(origin, "review", scenario)).status).toBe(401);
   expect((await post(origin, "review", scenario, { ...authorized, Origin: "https://other.example" })).status).toBe(403);
   const demo = await post(origin, "demo/review", scenario, { Origin: "https://proofguard.example" });
   expect(demo.headers.get("access-control-allow-origin")).toBe("https://proofguard.example");
-  expect((await demo.json()).inference.mode).toBe("demo");
+  expect(await demo.json()).toMatchObject({ reviewMode: "rules-only", simulation: true, inference: null });
   expect(fakeRouter.mock.calls.every(([url]) => url.startsWith(origin))).toBe(true);
 });
 
@@ -136,7 +136,7 @@ it("rate limits fixed public demos without a key and uses no 0G requests", async
   for (let n = 0; n < 30; n++) {
     const response = await post(origin, "demo/review", scenario);
     expect(response.status).toBe(200);
-    expect((await response.json()).inference.mode).toBe("demo");
+    expect(await response.json()).toMatchObject({ reviewMode: "rules-only", simulation: true, inference: null });
   }
   expect((await post(origin, "demo/review", scenario)).status).toBe(429);
   expect(outbound.mock.calls.every(([url]) => url.startsWith(origin))).toBe(true);
@@ -167,7 +167,7 @@ it("keeps a typed permit and its audit record across an application restart", as
   expect(result.status).toBe(200);
   const auditResponse = await fetch(`${second.origin}/api/audit/${permit.permitHash}`, { headers: authorized });
   expect(await auditResponse.json()).toMatchObject({ decision: "ALLOW", consumedAt: expect.any(Number),
-    deterministic: { facts: { tx: { data: transaction.data } } }, reviews: [expect.any(Object), expect.any(Object)], permit });
+    deterministic: { facts: { tx: { data: transaction.data } } }, reviewMode: "rules-only", reviews: [], permit });
   expect((await post(second.origin, "execute", { permitHash: permit.permitHash, transaction, signature })).status).toBe(422);
 });
 
@@ -185,7 +185,7 @@ it("enforces a Router request cap across application restarts", async () => {
   });
   const dir = mkdtempSync(path.join(tmpdir(), "proofguard-budget-test-"));
   folders.push(dir);
-  const options = { routerBudgetId: "test-cap", routerBudgetLimit: 2, database: path.join(dir, "db.sqlite") };
+  const options = { reviewMode: "rules-plus-models", routerBudgetId: "test-cap", routerBudgetLimit: 2, database: path.join(dir, "db.sqlite") };
   expect(readRouterRequestsUsed(options.database, options.routerBudgetId)).toBe(0);
   const first = await start(options);
   expect(readRouterRequestsUsed(options.database, options.routerBudgetId)).toBe(0);
@@ -223,7 +223,7 @@ it.each([true, false])("enforces an exact committed short run and halts on a vet
   folders.push(dir);
   const database = path.join(dir, "short.sqlite");
   const acceptance = { commit: "a".repeat(40), runId: "fixture-short", transactions: plan.transactions };
-  const { server, origin } = await start({ database, shortAcceptance: acceptance, wallet: signer.address, now: () => blockTime,
+  const { server, origin } = await start({ database, reviewMode: "rules-plus-models", shortAcceptance: acceptance, wallet: signer.address, now: () => blockTime,
     issuerKey: Wallet.createRandom().privateKey, guardAddress: signer.address, routerBudgetId: "fixture-short", routerBudgetLimit: 6,
     marketFor: async () => ({ source: "short-fixture", usdMicros: { [asset.usdc]: "1000000", [asset.weth]: "2000000000" },
       portfolio: { ethExposureBps: 3000, totalUsdMicros: "20000000" },
@@ -274,7 +274,7 @@ it("retains reviewer explanations for a verified veto without persisting raw mod
   const dir = mkdtempSync(path.join(tmpdir(), "proofguard-veto-test-"));
   folders.push(dir);
   const database = path.join(dir, "db.sqlite");
-  const { server, origin } = await start({ database, wallet: signer.address, marketFor: async () => ({
+  const { server, origin } = await start({ database, reviewMode: "rules-plus-models", wallet: signer.address, marketFor: async () => ({
     source: "independent-market-fixture", usdMicros: { [baseSepolia.usdc]: "1000000" },
     portfolio: { ethExposureBps: 3005, totalUsdMicros: "28571430" },
   }) });
@@ -338,7 +338,7 @@ it("blocks before Router fetch below the worst-case limit and stops before signi
     { headers: { "X-Request-ID": `transport-${outbound}` } });
   });
   try {
-    const { server, origin } = await start({ database, wallet: signer.address, issuerKey: signer.privateKey, guardAddress: signer.address,
+    const { server, origin } = await start({ database, reviewMode: "rules-plus-models", wallet: signer.address, issuerKey: signer.privateKey, guardAddress: signer.address,
       liveAcceptance: { bounds, usdLimit: () => limit }, marketFor: async () => ({ source: "fixture", usdMicros: { [baseSepolia.usdc]: "1000000" } }) });
     const token = new Interface(["function approve(address spender,uint256 amount)"]);
     const proposal = { chainId: baseSepolia.chainId, from: signer.address, to: baseSepolia.usdc, value: "0",
@@ -352,7 +352,7 @@ it("blocks before Router fetch below the worst-case limit and stops before signi
     expect(budget.rows().map(({ request_id, billing }) => [request_id, JSON.parse(billing).transportRequestId]))
       .toEqual([["test-1", "transport-1"], ["test-2", "transport-2"]]);
     await close(server);
-    const restarted = await start({ database, wallet: signer.address, issuerKey: signer.privateKey, guardAddress: signer.address,
+    const restarted = await start({ database, reviewMode: "rules-plus-models", wallet: signer.address, issuerKey: signer.privateKey, guardAddress: signer.address,
       liveAcceptance: { bounds, usdLimit: () => limit }, marketFor: async () => ({ source: "fixture", usdMicros: { [baseSepolia.usdc]: "1000000" } }) });
     expect((await post(restarted.origin, "review", { transaction: proposal }, authorized)).status).toBe(409);
     expect(outbound).toBe(2);

@@ -126,3 +126,15 @@ it("runs the rejection via the review endpoint and requires a live receipt with 
   response.onchainPermit = { signature: "0x" };
   await expect(checkRecipientRejection(client, safe)).rejects.toThrow("verified policy rejection");
 });
+
+it("records a deterministic recipient block in a rules-only run without admitting it as dual-model evidence", async () => {
+  const response = { transaction: probe, decision: "BLOCK", permit: null, reviewMode: "rules-only", simulation: false,
+    deterministic: { blockers: ["recipient"] }, evidence: { transactionHash: stableHash(probe) }, inference: null };
+  const client = { review: async () => response };
+  await expect(checkRecipientRejection(client, safe, { requireModels: false })).resolves.toEqual({
+    ...rejectionEntry, reviewMode: "rules-only", reviews: [],
+  });
+  await expect(checkRecipientRejection(client, safe)).rejects.toThrow("verified policy rejection");
+  response.simulation = true;
+  await expect(checkRecipientRejection(client, safe, { requireModels: false })).rejects.toThrow("verified policy rejection");
+});

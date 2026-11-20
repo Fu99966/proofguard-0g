@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { RULES_ONLY, RULES_PLUS_MODELS } from "../sdk/review.js";
 import { demoMarket, policy, scenarios } from "./demoData.js";
 import { evaluatePolicy, issuePermit, stableHash } from "./policyEngine.js";
 
@@ -23,25 +24,15 @@ describe("ProofGuard policy engine", () => {
     expect(evaluatePolicy(tx("slippage-spike"), policy, { market: demoMarket }).blockers).toContain("slippage");
   });
 
-  it("issues a permit only when the committee and policy allow", () => {
+  it("issues only a rules-based permit by default and requires both reviewers when enabled", () => {
     const transaction = tx("safe-swap");
     const deterministic = evaluatePolicy(transaction, policy, { market: demoMarket });
-    const allow = issuePermit({
-      transaction,
-      policy,
-      deterministic,
-      inference: { decision: "ALLOW", model: "0GM-1.0-35B-A3B", trustMode: "private", rawDecision: "allow" },
-    });
-    const block = issuePermit({
-      transaction,
-      policy,
-      deterministic,
-      inference: { decision: "BLOCK", model: "0GM-1.0-35B-A3B", trustMode: "private", rawDecision: "block" },
-    });
-    expect(allow.decision).toBe("ALLOW");
-    expect(allow.enforceable).toBe(false);
-    expect(block).toBeNull();
+    const permitInput = { transaction, policy, deterministic };
+    const allow = issuePermit(permitInput);
+    expect(allow).toMatchObject({ decision: "ALLOW", enforceable: false, reviewMode: RULES_ONLY, models: [] });
     expect(allow.permitHash).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(issuePermit({ ...permitInput, reviewMode: RULES_PLUS_MODELS })).toBeNull();
+    expect(issuePermit({ ...permitInput, reviewMode: RULES_PLUS_MODELS, inference: { decision: "ALLOW", mode: "live" } })).toBeNull();
   });
 
   it("hashes object keys deterministically", () => {

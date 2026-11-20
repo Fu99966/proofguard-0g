@@ -8,6 +8,7 @@ import { baseSepolia } from "../sdk/network.js";
 import { guardedSafeSigner } from "../sdk/guard.js";
 import { setupSafe } from "../sdk/safeSetup.js";
 import { permitTypedData } from "../sdk/permit.js";
+import { RULES_ONLY, RULES_PLUS_MODELS } from "../sdk/review.js";
 
 const localRpc = new URL(process.env.PROOFGUARD_FORK_RPC || "http://127.0.0.1:18545");
 if (localRpc.hostname !== "127.0.0.1") throw new Error("Use an isolated loopback Anvil fork.");
@@ -58,7 +59,6 @@ const generatedProofRequests = [];
 const priorEnv = Object.fromEntries(["ZERO_G_API_KEY", "ZERO_G_FORCE_DEMO", "ZERO_G_BASE_URL", "ZERO_G_MODEL",
   "ZERO_G_CRITIC_MODEL", "ZERO_G_ENABLE_COMMITTEE", "ZERO_G_TRUST_MODE"].map((name) => [name, process.env[name]]));
 for (const name of Object.keys(priorEnv)) delete process.env[name];
-process.env.ZERO_G_API_KEY = "fork-fixture-only";
 globalThis.fetch = async (url, options) => {
   if (url !== offlineRouter) return actualFetch(url, options);
   const { model } = JSON.parse(options.body);
@@ -69,51 +69,63 @@ globalThis.fetch = async (url, options) => {
     x_0g_trace: { request_id: `fixture-${model}`, provider: issuer.address, tee_verified: true } });
 };
 const apiKey = "fork-acceptance-fixture-key-00001";
-const app = createApp({ owner: ownerAddress, wallet: safe, database: ":memory:", issuerKey: issuer.privateKey, guardAddress,
-  keyHashes: [createHash("sha256").update(apiKey).digest("hex")],
-  marketFor: async () => ({ source: "fork-fixture", usdMicros: { [baseSepolia.usdc]: "1000000" } }),
-});
-const server = app.listen(0, "127.0.0.1");
-await once(server, "listening");
-try {
-  const client = createProofGuardClient({ apiUrl: `http://127.0.0.1:${server.address().port}`, apiKey });
-  const token = new Contract(baseSepolia.usdc, ["function approve(address spender,uint256 amount)",
-    "function allowance(address owner,address spender) view returns(uint256)"], provider);
-  const approval = { chainId: baseSepolia.chainId, from: safe, to: baseSepolia.usdc, value: "0",
-    data: token.interface.encodeFunctionData("approve", [baseSepolia.permit2, 1_000_000n]) };
-  let approvalPermit;
-  const outcome = await client.guardedSend(approval, async ({ transaction, result, typedData }) => {
-    approvalPermit = result.permit.permitHash;
-    const sent = await asAgent.executeGuarded(transaction.to, transaction.value, transaction.data, typedData.message, result.onchainPermit.signature);
-    return sent.wait();
-  }, { verifyingContract: guardAddress, inspect: async ({ result, typedData }) => {
-    const calldata = (await asAgent.executeGuarded.populateTransaction(approval.to, approval.value, approval.data,
-      typedData.message, result.onchainPermit.signature)).data;
-    const simulated = await provider.send("eth_simulateV1", [{ blockStateCalls: [{ calls: [{ from: await agent.getAddress(),
-      to: guardAddress, data: calldata }] }], traceTransfers: true, validation: false }, "latest"]);
-    if (BigInt(simulated[0].calls[0].status) !== 1n) throw new Error("API-issued permit simulation reverted");
-  } });
-  if (outcome.status !== 1 || await token.allowance(safe, baseSepolia.permit2) !== 1_000_000n || new Set(generatedProofRequests).size !== 2) {
-    throw new Error("Guarded API and SDK integration failed");
-  }
-  const audit = await client.audit(approvalPermit);
-  if (audit.permit?.permitHash !== approvalPermit || audit.reviews?.length !== 2
-    || audit.reviews.some(({ requestId, verification }) => !requestId || verification !== "router-verified")) {
-    throw new Error("The fork approval is missing its audit evidence");
-  }
-  const unauthorized = new Interface(["function transfer(address recipient,uint256 amount)"]);
-  const unacceptable = { ...approval, data: unauthorized.encodeFunctionData("transfer", [safeRecipient, 1n]) };
-  let submitted = false;
+async function verifyApiMode(reviewMode, amount, expectedReviewers) {
+  generatedProofRequests.length = 0;
+  const app = createApp({ owner: null, wallet: safe, database: ":memory:", issuerKey: issuer.privateKey, guardAddress, reviewMode,
+    keyHashes: [createHash("sha256").update(apiKey).digest("hex")],
+    marketFor: async () => ({ source: "fork-fixture", usdMicros: { [baseSepolia.usdc]: "1000000" } }),
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
   try {
-    await client.guardedSend(unacceptable, () => { submitted = true; });
-  } catch (error) {
-    if (error.message !== "ProofGuard did not grant a live permit.") throw error;
+    const client = createProofGuardClient({ apiUrl: `http://127.0.0.1:${server.address().port}`, apiKey });
+    const token = new Contract(baseSepolia.usdc, ["function approve(address spender,uint256 amount)",
+      "function allowance(address owner,address spender) view returns(uint256)"], provider);
+    const approval = { chainId: baseSepolia.chainId, from: safe, to: baseSepolia.usdc, value: "0",
+      data: token.interface.encodeFunctionData("approve", [baseSepolia.permit2, amount]) };
+    let approvalPermit;
+    const outcome = await client.guardedSend(approval, async ({ transaction, result, typedData }) => {
+      approvalPermit = result.permit.permitHash;
+      const sent = await asAgent.executeGuarded(transaction.to, transaction.value, transaction.data, typedData.message, result.onchainPermit.signature);
+      return sent.wait();
+    }, { verifyingContract: guardAddress, inspect: async ({ result, typedData }) => {
+      const calldata = (await asAgent.executeGuarded.populateTransaction(approval.to, approval.value, approval.data,
+        typedData.message, result.onchainPermit.signature)).data;
+      const simulated = await provider.send("eth_simulateV1", [{ blockStateCalls: [{ calls: [{ from: await agent.getAddress(),
+        to: guardAddress, data: calldata }] }], traceTransfers: true, validation: false }, "latest"]);
+      if (BigInt(simulated[0].calls[0].status) !== 1n) throw new Error("API-issued permit simulation reverted");
+    } });
+    if (outcome.status !== 1 || await token.allowance(safe, baseSepolia.permit2) !== amount
+      || new Set(generatedProofRequests).size !== expectedReviewers || generatedProofRequests.length !== expectedReviewers) {
+      throw new Error(`Guarded API and SDK integration failed in ${reviewMode} mode`);
+    }
+    const audit = await client.audit(approvalPermit);
+    if (audit.reviewMode !== reviewMode || audit.permit?.permitHash !== approvalPermit || audit.permit?.reviewMode !== reviewMode
+      || audit.reviews?.length !== expectedReviewers
+      || audit.reviews.some(({ requestId, verification }) => !requestId || verification !== "router-verified")) {
+      throw new Error(`The fork approval is missing its ${reviewMode} audit evidence`);
+    }
+    const unauthorized = new Interface(["function transfer(address recipient,uint256 amount)"]);
+    const unacceptable = { ...approval, data: unauthorized.encodeFunctionData("transfer", [safeRecipient, 1n]) };
+    let submitted = false;
+    try {
+      await client.guardedSend(unacceptable, () => { submitted = true; });
+    } catch (error) {
+      if (error.message !== "ProofGuard did not grant a live permit.") throw error;
+    }
+    if (submitted || generatedProofRequests.length !== expectedReviewers * 2) throw new Error("Rejected trade reached the signer");
+    console.log(`${reviewMode} passed through HTTP, SQLite, SDK and Safe Guard. Local approval ${outcome.hash}. The policy blocked the unapproved recipient.`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    app.locals.closeReviewStore();
   }
-  if (submitted || generatedProofRequests.length !== 4) throw new Error("Rejected trade reached the signer");
-  console.log(`A two-reviewer fixture went through HTTP, SQLite, the SDK and Safe Guard. Local approval ${outcome.hash}. The policy veto prevented an unapproved recipient from reaching the signer.`);
+}
+
+try {
+  await verifyApiMode(RULES_ONLY, 1_000_000n, 0);
+  process.env.ZERO_G_API_KEY = "fork-fixture-only";
+  await verifyApiMode(RULES_PLUS_MODELS, 2_000_000n, 2);
 } finally {
-  await new Promise((resolve) => server.close(resolve));
-  app.locals.closeReviewStore();
   globalThis.fetch = actualFetch;
   for (const [name, value] of Object.entries(priorEnv)) {
     if (value === undefined) delete process.env[name];

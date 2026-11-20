@@ -27,7 +27,9 @@ For the agent process, set `PROOFGUARD_RPC_URL`, `PROOFGUARD_ETH_USD_FEED`, `PRO
 npm run agent:rebalance -- --send --observe-24h
 ```
 
-The SDK asks for live review before every approval and swap. It verifies the issuer, replays the specific Safe call through `eth_simulateV1`, checks simulated token movements and verifies the confirmation's `PermitConsumed` event. Set the server's persistent Router budget for a bounded test run. After `run-finished`, verify the journal with the same Agent API and Base Sepolia RPC settings.
+The SDK asks for authenticated review before every approval and swap. The local server defaults to `rules-only`, which requires no 0G key. It verifies the issuer, replays the specific Safe call through `eth_simulateV1`, checks simulated token movements and verifies the confirmation's `PermitConsumed` event.
+
+The historical dual-model acceptance verifier requires two confirmed Router receipts on every review. For a separately authorized repetition, set `PROOFGUARD_REVIEW_MODE=rules-plus-models` on the server and configure the persistent Router budget. Use the same Agent API and Base Sepolia RPC settings to verify the completed journal.
 
 ```bash
 npm run agent:verify -- <run-id>
@@ -37,7 +39,7 @@ The verifier checks the journal for observation gaps and compares its start and 
 
 ## Safe fork verification
 
-Start Anvil on a loopback Base Sepolia fork and run the integration script. It verifies the deployed Safe singleton and factory code hashes, creates a test-local Safe, attaches both guards, and tests a valid typed permit plus missing and replayed permits. The funded state is local to Anvil.
+Start Anvil on a loopback Base Sepolia fork and run the integration script. It verifies deployed Safe code hashes, creates a test-local Safe and exercises both review modes through its Guard. The dual-model case uses mocked Router receipts. All writes stay on the local fork.
 
 ```bash
 node node_modules/@foundry-rs/anvil/bin.mjs --fork-url https://base-sepolia-rpc.publicnode.com --chain-id 84532 --host 127.0.0.1 --port 18545 --silent
@@ -46,6 +48,12 @@ node node_modules/@foundry-rs/anvil/bin.mjs --fork-url https://base-sepolia-rpc.
 ```bash
 npm run test:contracts
 node scripts/verify-safe.js
+```
+
+Run the forked Solidity integration and invariant suite on the pinned Base Sepolia block.
+
+```bash
+npm run test:contracts -- --fork-url https://sepolia.base.org --fork-block-number 61349084
 ```
 
 [Safe v1.5.0 deployment registry](https://github.com/safe-global/safe-deployments/tree/main/src/assets/v1.5.0) · [Base Sepolia Uniswap deployments](https://developers.uniswap.org/docs/protocols/v3/deployments/v3-base-deployments)

@@ -3,18 +3,18 @@ import cors from "cors";
 import express from "express";
 import { rateLimit } from "express-rate-limit";
 import { getAddress, Wallet } from "ethers";
-import { permitTypedData, recoverPermitSigner } from "../sdk/permit.js";
+import { assertPermitCommitment, permitTypedData, recoverPermitSigner } from "../sdk/permit.js";
+import { hasVerifiedReviewers, isReviewMode, RULES_ONLY, RULES_PLUS_MODELS } from "../sdk/review.js";
 import { agentAccess } from "./access.js";
 import { openReviewStore } from "./reviewStore.js";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { agent, demoMarket, policy as demoPolicy, scenarios, testnetPolicy } from "./demoData.js";
-import { evaluatePolicy, isTransactionProposal, issuePermit, stableHash } from "./policyEngine.js";
+import { evaluatePolicy, isTransactionProposal, issuePermit, reviewEvidenceValue, stableHash } from "./policyEngine.js";
 import { decodeTransaction } from "./decoder.js";
 import { chainlinkMarket } from "./market.js";
 import { getZeroGConfig, reviewWithZeroG, ZeroGReviewError } from "./zeroGAdapter.js";
 import { approvalWindowSeconds } from "../examples/rebalancer/short-acceptance.js";
-import { hasVerifiedReviewers } from "../examples/rebalancer/rejection.js";
 import { LiveBudgetError, openLiveBudget } from "./liveAcceptanceBudget.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -25,13 +25,15 @@ function publicThrottle(limit) {
 }
 
 export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = Date.now,
-  marketFor = chainlinkMarket({ rpc: process.env.PROOFGUARD_RPC_URL, ethFeed: process.env.PROOFGUARD_ETH_USD_FEED,
+  marketFor = chainlinkMarket({ rpc: process.env.PROOFGUARD_RPC_URL, ethFeed: process.env.PROOFGUARD_ETH_USD_FEED || undefined,
     usdcFeed: process.env.PROOFGUARD_USDC_USD_FEED, now }), wallet = process.env.PROOFGUARD_AGENT_WALLET,
   keyHashes = (process.env.PROOFGUARD_API_KEY_HASHES || "").split(",").map((hash) => hash.trim()).filter(Boolean),
   frontendOrigins = (process.env.PROOFGUARD_FRONTEND_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean),
   issuerKey = process.env.PROOFGUARD_TESTNET_ISSUER_KEY, guardAddress = process.env.PROOFGUARD_TESTNET_GUARD_ADDRESS,
   routerBudgetLimit = process.env.PROOFGUARD_ROUTER_REQUEST_LIMIT, routerBudgetId = process.env.PROOFGUARD_ROUTER_BUDGET_ID,
+  reviewMode = process.env.PROOFGUARD_REVIEW_MODE?.trim() || RULES_ONLY,
   rateOptions, shortAcceptance, liveAcceptance, database = process.env.PROOFGUARD_DATABASE_PATH || "var/proofguard.sqlite" } = {}) {
+  if (!isReviewMode(reviewMode)) throw new Error("PROOFGUARD_REVIEW_MODE must be rules-only or rules-plus-models.");
   const policy = { ...demoPolicy, owner: owner ? getAddress(owner) : null };
   const livePolicy = testnetPolicy(policy.owner, wallet ? getAddress(wallet).toLowerCase() : null);
   const shortHashes = shortAcceptance?.transactions.map(stableHash);
@@ -56,6 +58,7 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
   const { authenticate, throttle, auditThrottle } = agentAccess(keyHashes, rateOptions);
   const store = openReviewStore(database);
   const liveBudget = liveAcceptance ? openLiveBudget(database) : null;
+  app.locals.reviewMode = reviewMode;
   app.locals.closeReviewStore = () => {
     liveBudget?.close();
     store.close();
@@ -74,24 +77,31 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
     methods: ["GET", "POST", "OPTIONS"], allowedHeaders: ["Authorization", "Content-Type"] }));
 
   app.get("/api/health", (_req, res) => {
-    const zeroG = getZeroGConfig();
+    const zeroG = reviewMode === RULES_PLUS_MODELS ? getZeroGConfig() : null;
     res.json({
       ok: true,
       service: "proofguard",
-      ...zeroG,
+      mode: reviewMode,
+      reviewMode,
+      models: zeroG?.models ?? [],
+      trustMode: zeroG?.trustMode ?? null,
+      committeeEnabled: zeroG?.mode === "live",
       executionConfigured: Boolean(policy.owner),
+      onchainExecutionConfigured: Boolean(issuer),
     });
   });
 
   app.get("/api/demo", (_req, res) => {
-    const zeroG = getZeroGConfig();
     res.json({
       status: {
-        ...zeroG,
         mode: "demo",
-        agentReviewMode: zeroG.mode,
-        network: "0G Private Computer",
-        model: zeroG.models[0],
+        reviewMode: RULES_ONLY,
+        simulation: true,
+        agentReviewMode: reviewMode,
+        agentModelsAvailable: reviewMode === RULES_PLUS_MODELS && getZeroGConfig().mode === "live",
+        models: [],
+        trustMode: null,
+        committeeEnabled: false,
         executionConfigured: Boolean(policy.owner),
       },
       agent,
@@ -113,10 +123,14 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
     const transactionHash = stableHash(transaction);
     const isShort = Boolean(shortAcceptance && !publicDemo);
     const isLiveAcceptance = Boolean(liveBudget && !publicDemo);
+    const mode = publicDemo ? RULES_ONLY : reviewMode;
+    const simulation = !hasTransaction;
+    const useModels = mode === RULES_PLUS_MODELS;
+    const reviewContext = { reviewMode: mode, simulation };
     let reserved = false;
     if (isShort && (shortHalted || shortReviewActive || shortHashes[shortStep] !== transactionHash)) {
       shortHalted = true;
-      return res.status(409).json({ decision: "BLOCK", permit: null, error: "The committed short acceptance is stopped or out of order." });
+      return res.status(409).json({ decision: "BLOCK", permit: null, ...reviewContext, error: "The committed short acceptance is stopped or out of order." });
     }
     if (isShort) shortReviewActive = true;
     const shortEvidence = isShort ? { acceptance: { commit: shortAcceptance.commit, runId: shortAcceptance.runId, step: shortStep + 1, memo: transaction.memo } } : {};
@@ -135,21 +149,22 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
       const recognized = decoded && livePolicy.agentWallet === decoded.tx.from && livePolicy.allowedChains.includes(decoded.tx.chainId);
       const market = hasTransaction ? (recognized ? await marketFor(decoded) : null) : demoMarket;
       deterministic = evaluatePolicy(transaction, reviewPolicy, { market, now: now(), decoded });
-      if (isShort && (getZeroGConfig().mode !== "live" || (shortStep < 2 ? !deterministic.passed : !deterministic.blockers.includes("recipient")))) {
+      if (isShort && (!useModels || getZeroGConfig().mode !== "live"
+        || (shortStep < 2 ? !deterministic.passed : !deterministic.blockers.includes("recipient")))) {
         shortHalted = true;
-        store.record(transactionHash, { decision: "BLOCK", deterministic, policyHash, ...shortEvidence, permit: null }, null, now());
-        return res.status(409).json({ decision: "BLOCK", permit: null, error: "The short acceptance failed deterministic preflight." });
+        store.record(transactionHash, { decision: "BLOCK", ...reviewContext, deterministic, policyHash, ...shortEvidence, permit: null }, null, now());
+        return res.status(409).json({ decision: "BLOCK", permit: null, ...reviewContext, error: "The short acceptance failed deterministic preflight." });
       }
-      if (!publicDemo && requestLimit !== null && getZeroGConfig().mode === "live"
+      if (useModels && requestLimit !== null && getZeroGConfig().mode === "live"
         && !store.reserveRouterRequests(routerBudgetId, 2, requestLimit)) {
         if (isShort) shortHalted = true;
-        store.record(transactionHash, { decision: "BLOCK", deterministic, policyHash, ...shortEvidence, inferenceError: "Router budget exhausted", permit: null }, null, now());
-        res.status(429).json({ error: "Router budget exhausted for this run.", code: "ROUTER_BUDGET_EXHAUSTED", decision: "BLOCK", permit: null });
+        store.record(transactionHash, { decision: "BLOCK", ...reviewContext, deterministic, policyHash, ...shortEvidence, inferenceError: "Router budget exhausted", permit: null }, null, now());
+        res.status(429).json({ error: "Router budget exhausted for this run.", code: "ROUTER_BUDGET_EXHAUSTED", decision: "BLOCK", permit: null, ...reviewContext });
         return;
       }
       let reservation;
       if (isLiveAcceptance) {
-        if (getZeroGConfig().mode !== "live" || !issuer || !hasTransaction) throw new LiveBudgetError("Only configured live testnet proposals are permitted.");
+        if (!useModels || getZeroGConfig().mode !== "live" || !issuer || !hasTransaction) throw new LiveBudgetError("Only configured live testnet proposals are permitted.");
         const bounds = liveAcceptance.bounds;
         if (getZeroGConfig().models.some((model, index) => model !== bounds[index].model)) {
           throw new LiveBudgetError("Router model configuration changed after preflight.");
@@ -158,21 +173,24 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
         reserved = true;
         reservation = { bounds, settle: (model, charge) => liveBudget.settle(transactionHash, model, charge) };
       }
-      const inference = await reviewWithZeroG({ transaction, policy: reviewPolicy, deterministic, forceDemo: publicDemo, reservation });
-      const verified = !(isShort || isLiveAcceptance) || hasVerifiedReviewers(inference.committee.map(({ role, model, decision, receipt }) => ({
+      const inference = useModels ? await reviewWithZeroG({ transaction, policy: reviewPolicy, deterministic, requireLive: true, reservation }) : null;
+      const reviewers = inference?.committee ?? [];
+      const verified = !isShort || hasVerifiedReviewers(reviewers.map(({ role, model, decision, receipt }) => ({
         role, model, decision, requestId: receipt.requestId, verification: receipt.verification,
       })));
-      const permit = verified ? issuePermit({ transaction, policy: reviewPolicy, inference, deterministic, now: now() }) : null;
-      const evidence = { transactionHash, policyHash, responseCommitment: stableHash(inference.rawDecision) };
+      const permit = verified ? issuePermit({ transaction, policy: reviewPolicy, inference, deterministic, ...reviewContext, now: now() }) : null;
+      const responseValue = reviewEvidenceValue(deterministic, inference);
+      const evidence = { transactionHash, policyHash, responseCommitment: stableHash(responseValue) };
       let onchainPermit;
-      if (permit && issuer && hasTransaction && inference.mode === "live") {
+      if (permit && issuer && !simulation) {
         const { domain, types, message } = permitTypedData(permit, transaction, verifyingContract);
         onchainPermit = { verifyingContract, issuer: issuer.address, signature: await issuer.signTypedData(domain, types, message) };
       }
-      const response = { decision: permit ? "ALLOW" : "BLOCK", transaction, deterministic, inference, permit, evidence, onchainPermit };
+      const response = { decision: permit ? "ALLOW" : "BLOCK", ...reviewContext, transaction, deterministic, inference,
+        permit, evidence: { ...evidence, responseValue }, onchainPermit };
       if (!publicDemo || permit?.owner) store.record(transactionHash, {
-        decision: response.decision, deterministic, evidence, ...shortEvidence,
-        reviews: inference.committee.map(({ role, model, decision, receipt, summary, threats, charge }) => ({
+        decision: response.decision, ...reviewContext, deterministic, evidence, ...shortEvidence,
+        reviews: reviewers.map(({ role, model, decision, receipt, summary, threats, charge }) => ({
           role, model, decision, requestId: receipt.requestId ?? null, verification: receipt.verification,
           ...(charge && { charge }),
           ...((isShort || response.decision === "BLOCK") && {
@@ -194,13 +212,13 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
       if (error instanceof ZeroGReviewError || error instanceof LiveBudgetError) {
         try {
           if (!publicDemo) store.record(transactionHash, {
-            decision: "BLOCK", deterministic, policyHash, ...shortEvidence, inferenceError: error.message, permit: null,
+            decision: "BLOCK", ...reviewContext, deterministic, policyHash, ...shortEvidence, inferenceError: error.message, permit: null,
           }, null, now());
         } catch (storageError) {
           next(storageError);
           return;
         }
-        res.status(error.status).json({ decision: "BLOCK", permit: null, error: error.message,
+        res.status(error.status).json({ decision: "BLOCK", permit: null, ...reviewContext, error: error.message,
           ...(stoppedLive ? { code: "LIVE_BUDGET_INTEGRITY" } : error.code && { code: error.code }) });
         return;
       }
@@ -220,7 +238,7 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
 
   app.post("/api/execute", publicThrottle(60), jsonBody, (req, res) => {
     try {
-      const { permitHash, transaction, signature } = req.body || {};
+      const { permitHash, transaction, signature, reviewMode: announcedMode, permit: presentedPermit } = req.body || {};
       if (!policy.owner) throw new Error("Set PROOFGUARD_OWNER_ADDRESS to enable simulated execution.");
       if (typeof permitHash !== "string" || !/^0x[\da-f]{64}$/.test(permitHash)) throw new Error("Invalid permit hash");
       const stored = store.getPermit(permitHash);
@@ -228,6 +246,11 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
       if (stored.used) throw new Error("Permit nonce already consumed");
       if (Date.parse(stored.permit.expiresAt) <= now()) throw new Error("Permit expired");
       if (!isTransactionProposal(transaction) || stableHash(transaction) !== stored.permit.transactionHash) throw new Error("Transaction commitment mismatch");
+      if (announcedMode !== undefined && announcedMode !== stored.permit.reviewMode) throw new Error("Review mode commitment mismatch");
+      if (presentedPermit !== undefined) {
+        if (!presentedPermit || presentedPermit.permitHash !== permitHash) throw new Error("Permit commitment mismatch");
+        assertPermitCommitment(presentedPermit, transaction);
+      }
       let recovered;
       try {
         recovered = recoverPermitSigner(stored.permit, transaction, signature);
@@ -245,6 +268,7 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
         network: "ProofGuard simulation",
         owner: recovered,
         permitHash,
+        reviewMode: stored.permit.reviewMode,
         note: "Signature and one-time permit verified. Demo adapter does not broadcast or move funds.",
       });
     } catch (error) {
@@ -279,8 +303,16 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  const host = process.env.HOST?.trim() || "127.0.0.1";
   const port = Number(process.env.PORT || 8787);
-  createApp().listen(port, () => {
-    console.log(`ProofGuard listening on http://localhost:${port} (${getZeroGConfig().mode} mode)`);
+  if (host !== "127.0.0.1") {
+    console.warn(`Warning: HOST=${host} is different from the default loopback address 127.0.0.1. This may expose ProofGuard outside this machine.`);
+  }
+  const app = createApp();
+  const server = app.listen(port, host, (error) => {
+    if (error) throw error;
+    const { address, port: boundPort } = server.address();
+    const urlHost = address.includes(":") ? `[${address}]` : address;
+    console.log(`ProofGuard listening on http://${urlHost}:${boundPort} (${app.locals.reviewMode} mode)`);
   });
 }

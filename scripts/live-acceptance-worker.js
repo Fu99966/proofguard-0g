@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { once } from "node:events";
+import { RULES_PLUS_MODELS } from "../sdk/review.js";
 import { createApp } from "../server/index.js";
 import { chainlinkMarket, rpcProvider } from "../server/market.js";
 import { liveUsdMicros } from "../server/liveAcceptanceBudget.js";
@@ -13,7 +14,7 @@ const unavailable = rpcProvider("http://127.0.0.1:1");
 const market = chainlinkMarket({ provider, ethFeed, usdcFeed });
 const failedMarket = chainlinkMarket({ provider: unavailable, ethFeed, usdcFeed });
 let rpcDown = false;
-const app = createApp({ owner, wallet, guardAddress, issuerKey, database,
+const app = createApp({ owner, wallet, guardAddress, issuerKey, database, reviewMode: RULES_PLUS_MODELS,
   keyHashes: [createHash("sha256").update(apiKey).digest("hex")],
   marketFor: (decoded) => (rpcDown ? failedMarket : market)(decoded), routerBudgetLimit: "",
   liveAcceptance: { bounds, usdLimit: () => limit } });

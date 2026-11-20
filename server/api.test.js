@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { Wallet } from "ethers";
+import { Interface, verifyTypedData, Wallet } from "ethers";
 import { permitTypedData } from "../sdk/permit.js";
+import { baseSepolia } from "../sdk/network.js";
+import { RULES_ONLY, RULES_PLUS_MODELS } from "../sdk/review.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "./index.js";
 
@@ -20,16 +22,22 @@ describe("ProofGuard HTTP API", () => {
   let base;
   let clock;
 
-  beforeEach(async () => {
-    for (const name of ["API_KEY", "FORCE_DEMO", "BASE_URL", "MODEL", "CRITIC_MODEL", "TRUST_MODE", "ENABLE_COMMITTEE"]) {
-      vi.stubEnv(`ZERO_G_${name}`, undefined);
-    }
-    clock = Date.now();
-    const app = createApp({ owner: signer.address, now: () => clock, keyHashes, database: ":memory:" });
+  async function start(options) {
+    if (server?.listening) await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    const app = createApp({ owner: signer.address, now: () => clock, keyHashes, database: ":memory:", ...options });
     server = app.listen(0, "127.0.0.1");
     server.once("close", app.locals.closeReviewStore);
     await once(server, "listening");
     base = `http://127.0.0.1:${server.address().port}`;
+  }
+
+  beforeEach(async () => {
+    for (const name of ["API_KEY", "FORCE_DEMO", "BASE_URL", "MODEL", "CRITIC_MODEL", "TRUST_MODE", "ENABLE_COMMITTEE"]) {
+      vi.stubEnv(`ZERO_G_${name}`, undefined);
+    }
+    vi.stubEnv("PROOFGUARD_REVIEW_MODE", undefined);
+    clock = Date.now();
+    await start();
   });
 
   afterEach(async () => {
@@ -53,7 +61,8 @@ describe("ProofGuard HTTP API", () => {
   }
 
   it("issues one demo permit across the four scenarios and matches independent commitment vectors", async () => {
-    const { data: { policy, scenarios } } = await request("demo");
+    const { data: { policy, scenarios, status: demoStatus } } = await request("demo");
+    expect(demoStatus).toMatchObject({ reviewMode: RULES_ONLY, agentReviewMode: RULES_ONLY, simulation: true, models: [] });
     function normalize(value) {
       if (Array.isArray(value)) return value.map(normalize);
       if (value && typeof value === "object") {
@@ -68,16 +77,20 @@ describe("ProofGuard HTTP API", () => {
       expect(status).toBe(200);
       expect(data.decision).toBe(expected);
       if (expected === "BLOCK") expect(data.permit).toBeNull();
-      else expect(data.permit).toMatchObject({ decision: expected, owner: signer.address, enforceable: true });
-      expect(data.inference.receipt).toMatchObject({ verification: "simulation", verified: false });
+      else expect(data.permit).toMatchObject({ version: "proofguard-permit/3", decision: expected, owner: signer.address,
+        enforceable: true, reviewMode: RULES_ONLY, simulation: true, models: [], evidenceHash: data.evidence.responseCommitment });
+      expect(data).toMatchObject({ reviewMode: RULES_ONLY, simulation: true, inference: null });
+      const { responseValue } = data.evidence;
+      expect(JSON.parse(responseValue)).toEqual({ decision: expected, checks: data.deterministic.checks });
       expect(data.evidence).toEqual({
         transactionHash: sha(scenario.transaction),
         policyHash: sha(policy),
-        responseCommitment: sha(data.inference.rawDecision),
+        responseValue,
+        responseCommitment: sha(responseValue),
       });
       const expectedHash = data.evidence.responseCommitment;
-      expect((await request("verify-commitment", { value: data.inference.rawDecision, expectedHash })).data.valid).toBe(true);
-      expect((await request("verify-commitment", { value: data.inference.rawDecision + " ", expectedHash })).data.valid).toBe(false);
+      expect((await request("verify-commitment", { value: responseValue, expectedHash })).data.valid).toBe(true);
+      expect((await request("verify-commitment", { value: responseValue + " ", expectedHash })).data.valid).toBe(false);
     }
   });
 
@@ -87,6 +100,8 @@ describe("ProofGuard HTTP API", () => {
     const otherSignature = await sign(input.permit, input.transaction, Wallet.createRandom());
     expect((await request("execute", { ...input, signature: otherSignature })).status).toBe(422);
     expect((await request("execute", { ...input, transaction: changed })).status).toBe(422);
+    expect((await request("execute", { ...input, reviewMode: RULES_PLUS_MODELS })).status).toBe(422);
+    expect((await request("execute", { ...input, permit: { ...input.permit, reviewMode: RULES_PLUS_MODELS } })).status).toBe(422);
 
     const consumed = await Promise.all(Array.from({ length: 20 }, () => request("execute", input)));
     expect(consumed.filter(({ status }) => status === 200)).toHaveLength(1);
@@ -112,24 +127,29 @@ describe("ProofGuard HTTP API", () => {
       if (critic && outcome === "timeout") throw new DOMException("test timeout", "TimeoutError");
       if (critic && outcome === "http error") return new Response(null, { status: 503 });
       const decision = critic && outcome === "invalid" ? "{}" : critic && outcome === "veto" ? allow.replace("ALLOW", "BLOCK") : allow;
-      const verification = critic && !["verified", "veto", "truncated"].includes(outcome) ? (outcome === "failed" ? false : undefined) : true;
+      const verification = critic && !["verified", "veto", "truncated", "duplicate receipts"].includes(outcome)
+        ? (outcome === "failed" ? false : undefined) : true;
       return Response.json({
         id: body.model,
         model: critic && outcome === "wrong model" ? "different-model" : body.model,
         choices: [{ finish_reason: critic && outcome === "truncated" ? "length" : "stop", message: { content: decision } }],
-        x_0g_trace: { request_id: `request-${body.model}`, provider: signer.address, tee_verified: verification },
+        x_0g_trace: { request_id: outcome === "duplicate receipts" ? "shared-request" : `request-${body.model}`,
+          provider: signer.address, tee_verified: verification },
       }, { headers: { "x-0g-fixture": "metadata-only", "ZG-Res-Key": `chat-${body.model}` } });
     });
     return calls;
   }
 
   it("normalizes configured model IDs and returns both private verification receipts", async () => {
+    vi.stubEnv("PROOFGUARD_REVIEW_MODE", RULES_PLUS_MODELS);
+    await start();
     const calls = stubRouter();
     vi.stubEnv("ZERO_G_MODEL", "0GM-1.0-35B-A3B");
     vi.stubEnv("ZERO_G_CRITIC_MODEL", "0GM-1.0-35B-A3B-SIA");
     const { status, data } = await request("review", { scenarioId: "safe-swap" });
     expect(status).toBe(200);
-    expect(data.permit).toMatchObject({ decision: "ALLOW", owner: signer.address });
+    expect(data).toMatchObject({ reviewMode: RULES_PLUS_MODELS, simulation: true,
+      permit: { decision: "ALLOW", owner: signer.address, reviewMode: RULES_PLUS_MODELS, simulation: true } });
     expect(calls.map(({ body }) => body.model).sort()).toEqual(["0gm-1.0-35b-a3b", "0gm-1.0-35b-a3b-sia"]);
     for (const { body, headers } of calls) {
       expect(body.verify_tee).toBe(true);
@@ -154,13 +174,15 @@ describe("ProofGuard HTTP API", () => {
     expect(blocked.data.inference.decision).toBe("ALLOW");
   });
 
-  it.each(["failed", "missing", "veto", "invalid", "timeout", "http error", "wrong model"])("never issues a permit for reviewer outcome %s", async (outcome) => {
+  it.each(["failed", "missing", "veto", "invalid", "timeout", "http error", "wrong model", "duplicate receipts"])("never issues a permit for reviewer outcome %s", async (outcome) => {
+    await start({ reviewMode: RULES_PLUS_MODELS });
     stubRouter(outcome);
     const { data } = await request("review", { scenarioId: "safe-swap" });
     expect(data).toMatchObject({ decision: "BLOCK", permit: null });
   });
 
   it("rejects even a valid-looking ALLOW when the reviewer finished at the output limit", async () => {
+    await start({ reviewMode: RULES_PLUS_MODELS });
     stubRouter("truncated");
     const { status, data } = await request("review", { scenarioId: "safe-swap" });
     expect(status).toBe(502);
@@ -168,10 +190,47 @@ describe("ProofGuard HTTP API", () => {
   });
 
   it("validates input before calling the Router and rejects a disabled live committee", async () => {
+    await start({ reviewMode: RULES_PLUS_MODELS });
     const calls = stubRouter();
     expect((await request("review", { transaction: { valueUsd: null } })).status).toBe(400);
     vi.stubEnv("ZERO_G_ENABLE_COMMITTEE", "false");
     expect((await request("review", { scenarioId: "safe-swap" })).status).toBe(503);
     expect(calls).toHaveLength(0);
+  });
+
+  it("fails closed when dual review is configured but the Router key is unavailable", async () => {
+    await start({ reviewMode: RULES_PLUS_MODELS });
+    vi.stubEnv("ZERO_G_FORCE_DEMO", "true");
+    const { status, data } = await request("review", { scenarioId: "safe-swap" });
+    expect(status).toBe(503);
+    expect(data).toMatchObject({ reviewMode: RULES_PLUS_MODELS, decision: "BLOCK", permit: null });
+  });
+
+  it.each([undefined, "unused-router-key"])("issues an actual testnet Permit in the default mode with key %s", async (key) => {
+    vi.stubEnv("ZERO_G_API_KEY", key);
+    const fetchLocal = globalThis.fetch;
+    const outbound = vi.fn(async (url, init) => {
+      if (url.startsWith(base)) return fetchLocal(url, init);
+      throw new Error("Unplanned network request.");
+    });
+    vi.stubGlobal("fetch", outbound);
+    const issuer = Wallet.createRandom();
+    const guardAddress = Wallet.createRandom().address;
+    const { permit2, usdc, chainId } = baseSepolia;
+    const contract = new Interface(["function approve(address spender,uint256 amount)"]);
+    const tx = { chainId, from: signer.address, to: usdc, value: "0", data: contract.encodeFunctionData("approve", [permit2, 1_000_000n]) };
+    await start({ owner: key ? signer.address : null, wallet: signer.address, issuerKey: issuer.privateKey, guardAddress,
+      routerBudgetLimit: 0, routerBudgetId: "never-used",
+      marketFor: async () => ({ source: "offline-price", usdMicros: { [usdc]: "1000000" } }) });
+    const { data, status } = await request("review", { transaction: tx, reviewMode: RULES_PLUS_MODELS });
+    expect(status).toBe(200);
+    expect(data).toMatchObject({ reviewMode: RULES_ONLY, decision: "ALLOW", simulation: false, inference: null,
+      permit: { reviewMode: RULES_ONLY, simulation: false }, onchainPermit: { verifyingContract: guardAddress, issuer: issuer.address } });
+    const { domain, types, message } = permitTypedData(data.permit, tx, guardAddress);
+    expect(verifyTypedData(domain, types, message, data.onchainPermit.signature)).toBe(issuer.address);
+    expect(() => permitTypedData({ ...data.permit, reviewMode: RULES_PLUS_MODELS }, tx, guardAddress)).toThrow("permit commitment");
+    const bad = { ...tx, data: contract.encodeFunctionData("approve", [permit2, 2n ** 256n - 1n]) };
+    expect((await request("review", { transaction: bad })).data).toMatchObject({ decision: "BLOCK", permit: null, inference: null });
+    expect(outbound.mock.calls.every(([url]) => url.startsWith(base))).toBe(true);
   });
 });

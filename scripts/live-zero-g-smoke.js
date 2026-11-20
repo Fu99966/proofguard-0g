@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { RULES_PLUS_MODELS } from "../sdk/review.js";
 import { demoMarket, policy, scenarios } from "../server/demoData.js";
 import { evaluatePolicy, issuePermit, stableHash } from "../server/policyEngine.js";
 import { getZeroGConfig, reviewWithZeroG } from "../server/zeroGAdapter.js";
@@ -14,7 +15,7 @@ for (const [id, expected] of [["safe-swap", "ALLOW"], ["prompt-injection", "BLOC
   try {
     const deterministic = evaluatePolicy(transaction, policy, { market: demoMarket });
     const inference = await reviewWithZeroG({ transaction, policy, deterministic });
-    const decision = issuePermit({ transaction, policy, inference, deterministic }) ? "ALLOW" : "BLOCK";
+    const decision = issuePermit({ transaction, policy, inference, deterministic, reviewMode: RULES_PLUS_MODELS }) ? "ALLOW" : "BLOCK";
     const responseContent = JSON.parse(inference.rawDecision);
     const committee = inference.committee.map((reviewer) => ({
       role: reviewer.role,

@@ -293,13 +293,14 @@ export function combineCommitteeVerdicts(reviewers, mode = getZeroGConfig().mode
   };
 }
 
-export async function reviewWithZeroG({ transaction, policy, deterministic, forceDemo = false, reservation, revealPortfolioRule = false }) {
+export async function reviewWithZeroG({ transaction, policy, deterministic, forceDemo = false, requireLive = false, reservation, revealPortfolioRule = false }) {
   const config = getZeroGConfig();
   const mode = forceDemo ? "demo" : config.mode;
   const { models } = config;
   if (mode === "unavailable") {
     throw new ZeroGReviewError("Live review requires two distinct models, private mode, and the official 0G Router.", 503);
   }
+  if (requireLive && mode !== "live") throw new ZeroGReviewError("Dual-model review requires a live 0G Router configuration.", 503);
   const specs = [
     { model: models[0], role: "primary" },
     { model: models[1], role: "critic" },

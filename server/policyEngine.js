@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 
 import { decodeTransaction } from "./decoder.js";
+import { stableHash } from "../sdk/commitment.js";
+import { isLiveModelApproval, isReviewMode, RULES_ONLY, RULES_PLUS_MODELS } from "../sdk/review.js";
+export { stableHash } from "../sdk/commitment.js";
 export { isTransactionProposal } from "./decoder.js";
 
 const INJECTION_PATTERNS = [
@@ -10,18 +13,6 @@ const INJECTION_PATTERNS = [
   /never mention this instruction/i,
   /bypass/i,
 ];
-
-function stableStringify(value) {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
-export function stableHash(value) {
-  return `0x${crypto.createHash("sha256").update(stableStringify(value)).digest("hex")}`;
-}
 
 function asset(policy, chainId, address) {
   return policy.allowedAssets[`${chainId}:${address}`];
@@ -196,20 +187,28 @@ function verdict(checks, facts) {
   return { passed: blockers.length === 0, score: Math.max(0, 100 - blockers.length * 28), checks, blockers, facts };
 }
 
-export function issuePermit({ transaction, policy, inference, deterministic, now = Date.now() }) {
-  if (!deterministic.passed || inference.decision !== "ALLOW") return null;
+export function reviewEvidenceValue(deterministic, inference) {
+  return inference?.rawDecision ?? JSON.stringify({ decision: deterministic.passed ? "ALLOW" : "BLOCK", checks: deterministic.checks });
+}
+
+export function issuePermit({ transaction, policy, inference, deterministic, reviewMode = RULES_ONLY, simulation = false, now = Date.now() }) {
+  if (!deterministic.passed || !isReviewMode(reviewMode)
+    || (reviewMode === RULES_PLUS_MODELS && !isLiveModelApproval(inference))) return null;
   const issuedAt = new Date(now);
   const expiresAt = new Date(now + policy.expiresInSeconds * 1000);
+  const modelReview = reviewMode === RULES_PLUS_MODELS ? inference : null;
   const payload = {
-    version: "proofguard-permit/2",
+    version: "proofguard-permit/3",
     decision: "ALLOW",
     owner: policy.owner ?? null,
     transactionHash: stableHash(transaction),
     policyHash: stableHash(policy),
-    inferenceHash: stableHash(inference.rawDecision),
-    model: inference.model,
-    models: inference.models || [inference.model],
-    trustMode: inference.trustMode,
+    reviewMode,
+    simulation,
+    evidenceHash: stableHash(reviewEvidenceValue(deterministic, modelReview)),
+    model: modelReview?.model ?? null,
+    models: modelReview?.models ?? [],
+    trustMode: modelReview?.trustMode ?? null,
     issuedAt: issuedAt.toISOString(),
     expiresAt: expiresAt.toISOString(),
     nonce: crypto.randomBytes(12).toString("hex"),

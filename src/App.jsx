@@ -1,6 +1,6 @@
 import { TypedDataEncoder } from "ethers";
 import { baseSepolia } from "../sdk/network.js";
-import { permitTypedData } from "../sdk/permit.js";
+import { assertPermitCommitment, permitTypedData } from "../sdk/permit.js";
 import {
   Activity,
   AlertTriangle,
@@ -122,6 +122,12 @@ function App() {
 
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Review failed");
+      if (payload.permit) {
+        assertPermitCommitment(payload.permit, payload.transaction);
+        if (payload.permit.reviewMode !== payload.reviewMode || payload.permit.simulation !== payload.simulation) {
+          throw new Error("审查结果与 Permit 的模式或来源不一致。");
+        }
+      }
 
       setReviewMode(payload.reviewMode);
       appendLog(`Review completed: ${modeLabels[payload.reviewMode]}`);
@@ -460,7 +466,6 @@ function Decision({ result }) {
         {receipt.verified ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
         {receipt.label}
       </div>}
-      <div className="receipt-status">{modeLabels[result.permit?.reviewMode ?? result.reviewMode]}</div>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { hasVerifiedReviewers } from "../examples/rebalancer/rejection.js";
+import { RULES_PLUS_MODELS } from "../sdk/review.js";
 import { issuePermit } from "../server/policyEngine.js";
 import { reviewWithZeroG } from "../server/zeroGAdapter.js";
 
@@ -11,7 +12,7 @@ export async function evaluateApprovalCommittee({ transaction, policy, determini
         tokenCount: Number.isSafeInteger(count) && count >= 0 ? count : null };
     });
     const verified = result.mode === "live" && result.receipt.verified && hasVerifiedReviewers(reviewers);
-    const permit = verified && issuePermit({ transaction, policy, inference: result, deterministic });
+    const permit = verified && issuePermit({ transaction, policy, inference: result, deterministic, reviewMode: RULES_PLUS_MODELS });
     return { status: verified ? "verified" : "inconclusive", decision: verified ? result.decision : null,
       permitIssued: Boolean(permit), elapsedMs: Math.round(performance.now() - startedAt), reviewers };
   } catch (error) {

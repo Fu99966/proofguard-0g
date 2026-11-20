@@ -1,4 +1,6 @@
 import { keccak256, verifyTypedData } from "ethers";
+import { stableHash } from "./commitment.js";
+import { isReviewMode } from "./review.js";
 
 export const permitTypes = {
   Permit: [
@@ -12,7 +14,26 @@ export const permitTypes = {
   ],
 };
 
+const permitFields = ["version", "decision", "owner", "transactionHash", "policyHash", "model",
+  "models", "trustMode", "issuedAt", "expiresAt", "nonce"];
+const modeFields = ["reviewMode", "simulation", "evidenceHash"];
+
+export function assertPermitCommitment(permit, tx) {
+  const current = permit.version === "proofguard-permit/3";
+  if (current ? !isReviewMode(permit.reviewMode) || typeof permit.simulation !== "boolean"
+    : permit.version !== "proofguard-permit/2" || modeFields.some((field) => Object.hasOwn(permit, field))) {
+    throw new Error("ProofGuard returned unsupported permit metadata.");
+  }
+  const fields = [...permitFields, ...(current ? modeFields : ["inferenceHash"])];
+  if (fields.some((field) => !Object.hasOwn(permit, field))) throw new Error("ProofGuard returned incomplete permit metadata.");
+  const payload = Object.fromEntries(fields.map((field) => [field, permit[field]]));
+  if (stableHash(payload) !== permit.permitHash || (tx && stableHash(tx) !== permit.transactionHash)) {
+    throw new Error("ProofGuard returned an invalid permit commitment.");
+  }
+}
+
 export function permitTypedData(permit, tx, verifyingContract) {
+  if (permit.version !== undefined || permit.transactionHash !== undefined || permit.reviewMode !== undefined) assertPermitCommitment(permit, tx);
   const domain = { name: "ProofGuard", version: "1", chainId: tx.chainId };
   if (verifyingContract) domain.verifyingContract = verifyingContract;
   return {
