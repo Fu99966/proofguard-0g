@@ -1,0 +1,13 @@
+# Public HTTP controls verification
+
+Status **verified locally, hosted revision unverified**.
+
+- `POST /api/review` applies the Agent bearer check before JSON parsing and allows 30 requests per Agent key per minute. `GET /api/audit/:hash` requires the same kind of bearer key and has an independent 60-per-minute quota by key. Bad or missing keys return 401. Requests beyond the applicable limit return 429 with a retry interval. Browser preflights reach CORS without a bearer key.
+- The fixed public demo keeps its 30-per-minute limit per connection IP and uses simulated review, including when a Router key is present. Public signature-based simulation and commitment verification each now allow 60 requests per minute per connection IP, with the limits applied before parsing. The simulation still requires a configured owner’s signature and an unused permit and cannot broadcast.
+- The exact HTTP(S) origin whitelist rejects wildcards, opaque origins and paths at startup. HTTP tests verified `204` and the exact CORS header on allowed preflights, `403` without an allow-origin header on denied preflights, and a cache variant per Origin. The API keeps its direct same-origin allowance. Set `PROOFGUARD_FRONTEND_ORIGINS` to the exact public HTTPS origin for a TLS-terminating ingress. Client-supplied forwarded host and protocol are ignored.
+- The Docker runtime now includes both rebalancer modules imported by the API and defaults to port 8080. A staged Node runtime using the final stage's COPY file layout started and returned successful health and expected CORS and bearer results. A Docker engine and the actual hosted service URL were unavailable.
+- The full Vitest suite passed 101 tests. The network guard in the public demo tests observed no Router requests. No hosted settings were changed.
+
+Hosted acceptance requires the actual HTTPS service URL or a cloud project and service identity and the revision it serves. Check unauthenticated review and audit with an empty request, browser OPTIONS for the configured production origin and one independent origin, and the effective rate limit in a disposable zero-inference test deployment. Confirm the replica count and whether quotas need shared state across replicas. The default in-memory limiter applies per process and uses the socket peer for public routes. A proxy setup requiring per-visitor public limits needs an ingress limiter or explicitly trusted topology.
+
+[Cloud Run runtime contract](https://docs.cloud.google.com/run/docs/container-contract) · [Express proxy guidance](https://expressjs.com/en/guide/behind-proxies/) · [Rate-limit store behavior](https://express-rate-limit.mintlify.app/reference/stores)

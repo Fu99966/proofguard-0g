@@ -73,6 +73,84 @@ it("returns 429 after the configured authenticated review allowance", async () =
   expect((await post(origin, "review", scenario, authorized)).status).toBe(429);
 });
 
+it("enforces an exact CORS allowlist and permits admitted browser preflights without a key", async () => {
+  const allowed = "https://proofguard.example";
+  const { origin } = await start({ frontendOrigins: [allowed] });
+  const preflight = async (browserOrigin, extraHeaders) => fetch(`${origin}/api/review`, {
+    method: "OPTIONS", headers: {
+      Origin: browserOrigin, "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "authorization,content-type", ...extraHeaders,
+    },
+  });
+  const admitted = await preflight(allowed);
+  expect(admitted.status).toBe(204);
+  expect(admitted.headers.get("access-control-allow-origin")).toBe(allowed);
+  expect(admitted.headers.get("access-control-allow-headers")).toMatch(/Authorization,Content-Type/i);
+  expect((await preflight(origin)).status).toBe(204);
+  for (const other of ["null", "http://proofguard.example", "https://other.example"]) {
+    const denied = await preflight(other, { "X-Forwarded-Host": "other.example", "X-Forwarded-Proto": "https" });
+    expect(denied.status).toBe(403);
+    expect(denied.headers.get("access-control-allow-origin")).toBeNull();
+    expect(denied.headers.get("vary")).toMatch(/Origin/i);
+  }
+  expect((await fetch(`${origin}/api/demo`)).headers.get("access-control-allow-origin")).toBeNull();
+});
+
+it.each(["null", "*", "file:///", "https://proofguard.example/path"])("rejects the inadmissible configured origin %s", (origin) => {
+  expect(() => createApp({ frontendOrigins: [origin], database: ":memory:" })).toThrow("exact HTTP(S) origins");
+});
+
+it("authenticates and rates reviews before JSON parsing and isolates audit and Agent quotas", async () => {
+  vi.stubEnv("ZERO_G_FORCE_DEMO", "true");
+  const secondKey = "another-test-key-0123456789";
+  const secondHash = createHash("sha256").update(secondKey).digest("hex");
+  const { origin } = await start({ keyHashes: [keyHash, secondHash], rateOptions: { limit: 1, auditLimit: 1 } });
+  const badJson = (headers) => fetch(`${origin}/api/review`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: "{",
+  });
+  const anonymous = await badJson();
+  expect(anonymous.status).toBe(401);
+  expect(anonymous.headers.get("www-authenticate")).toBe("Bearer");
+  expect((await badJson({ Authorization: "Bearer invalid-key-0123456789" })).status).toBe(401);
+  expect((await badJson(authorized)).status).toBe(400);
+  const throttled = await badJson(authorized);
+  expect(throttled.status).toBe(429);
+  expect(throttled.headers.get("retry-after")).not.toBeNull();
+  expect((await post(origin, "review", scenario, { Authorization: `Bearer ${secondKey}` })).status).toBe(200);
+  const audit = (headers) => fetch(`${origin}/api/audit/0x${"0".repeat(64)}`, { headers });
+  expect((await audit()).status).toBe(401);
+  expect((await audit(authorized)).status).toBe(404);
+  expect((await audit(authorized)).status).toBe(429);
+  expect((await audit({ Authorization: `Bearer ${secondKey}` })).status).toBe(404);
+});
+
+it("rate limits fixed public demos without a key and uses no 0G requests", async () => {
+  vi.stubEnv("ZERO_G_API_KEY", "unused-test-router");
+  const realFetch = globalThis.fetch;
+  const outbound = vi.fn(async (url, init) => {
+    if (url.startsWith("https://router-api.0g.ai")) throw new Error("Router must not be called");
+    return realFetch(url, init);
+  });
+  vi.stubGlobal("fetch", outbound);
+  const { origin } = await start({ keyHashes: [] });
+  for (let n = 0; n < 30; n++) {
+    const response = await post(origin, "demo/review", scenario);
+    expect(response.status).toBe(200);
+    expect((await response.json()).inference.mode).toBe("demo");
+  }
+  expect((await post(origin, "demo/review", scenario)).status).toBe(429);
+  expect(outbound.mock.calls.every(([url]) => url.startsWith(origin))).toBe(true);
+});
+
+it.each(["execute", "verify-commitment"])("bounds repeated %s requests on the public simulation surface", async (route) => {
+  const { origin } = await start();
+  const invalid = () => fetch(`${origin}/api/${route}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{" });
+  for (let n = 0; n < 60; n++) expect((await invalid()).status).toBe(400);
+  const throttled = await invalid();
+  expect(throttled.status).toBe(429);
+  expect(throttled.headers.get("ratelimit")).toContain("r=0");
+});
+
 it("keeps a typed permit and its audit record across an application restart", async () => {
   vi.stubEnv("ZERO_G_FORCE_DEMO", "true");
   const dir = mkdtempSync(path.join(tmpdir(), "proofguard-db-test-"));

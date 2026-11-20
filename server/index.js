@@ -19,6 +19,11 @@ import { LiveBudgetError, openLiveBudget } from "./liveAcceptanceBudget.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function publicThrottle(limit) {
+  return rateLimit({ limit, windowMs: 60_000, standardHeaders: "draft-8", legacyHeaders: false,
+    message: { error: "ProofGuard public API rate limit exceeded." } });
+}
+
 export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = Date.now,
   marketFor = chainlinkMarket({ rpc: process.env.PROOFGUARD_RPC_URL, ethFeed: process.env.PROOFGUARD_ETH_USD_FEED,
     usdcFeed: process.env.PROOFGUARD_USDC_USD_FEED, now }), wallet = process.env.PROOFGUARD_AGENT_WALLET,
@@ -39,8 +44,16 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
   if (requestLimit !== null && (!Number.isSafeInteger(requestLimit) || requestLimit < 0 || !routerBudgetId?.trim())) {
     throw new Error("Set a nonnegative Router request cap with its persistent budget ID.");
   }
+  const allowedOrigins = new Set(frontendOrigins);
+  for (const origin of allowedOrigins) {
+    const url = URL.parse(origin);
+    if (!url || !["http:", "https:"].includes(url.protocol) || origin !== url.origin) {
+      throw new Error("ProofGuard frontend origins must be exact HTTP(S) origins without paths or wildcards.");
+    }
+  }
   const app = express();
-  const { authenticate, throttle } = agentAccess(keyHashes, rateOptions);
+  const jsonBody = express.json({ limit: "64kb" });
+  const { authenticate, throttle, auditThrottle } = agentAccess(keyHashes, rateOptions);
   const store = openReviewStore(database);
   const liveBudget = liveAcceptance ? openLiveBudget(database) : null;
   app.locals.closeReviewStore = () => {
@@ -49,8 +62,9 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
   };
 
   app.use("/api", (req, res, next) => {
+    res.vary("Origin");
     const origin = req.get("Origin");
-    if (origin && !frontendOrigins.includes(origin) && origin !== `${req.protocol}://${req.get("Host")}`) {
+    if (origin && !allowedOrigins.has(origin) && origin !== `${req.protocol}://${req.get("Host")}`) {
       res.status(403).json({ error: "Origin is not allowed." });
       return;
     }
@@ -58,7 +72,6 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
   });
   app.use("/api", cors({ origin: (origin, callback) => callback(null, Boolean(origin)),
     methods: ["GET", "POST", "OPTIONS"], allowedHeaders: ["Authorization", "Content-Type"] }));
-  app.use(express.json({ limit: "64kb" }));
 
   app.get("/api/health", (_req, res) => {
     const zeroG = getZeroGConfig();
@@ -197,15 +210,15 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
     }
   }
 
-  app.post("/api/review", authenticate, throttle, (req, res, next) => review(req, res, next, false));
-  app.post("/api/demo/review", rateLimit({ windowMs: 60_000, limit: 30 }), (req, res, next) => review(req, res, next, true));
-  app.get("/api/audit/:hash", authenticate, (req, res) => {
+  app.post("/api/review", authenticate, throttle, jsonBody, (req, res, next) => review(req, res, next, false));
+  app.post("/api/demo/review", publicThrottle(30), jsonBody, (req, res, next) => review(req, res, next, true));
+  app.get("/api/audit/:hash", authenticate, auditThrottle, (req, res) => {
     const audit = store.getAudit(req.params.hash);
     if (!audit) return res.status(404).json({ error: "Unknown permit." });
     return res.json(audit);
   });
 
-  app.post("/api/execute", (req, res) => {
+  app.post("/api/execute", publicThrottle(60), jsonBody, (req, res) => {
     try {
       const { permitHash, transaction, signature } = req.body || {};
       if (!policy.owner) throw new Error("Set PROOFGUARD_OWNER_ADDRESS to enable simulated execution.");
@@ -239,7 +252,7 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
     }
   });
 
-  app.post("/api/verify-commitment", (req, res) => {
+  app.post("/api/verify-commitment", publicThrottle(60), jsonBody, (req, res) => {
     const { value, expectedHash } = req.body || {};
     if (value === undefined || typeof expectedHash !== "string" || !/^0x[0-9a-f]{64}$/.test(expectedHash)) {
       res.status(400).json({ error: "A JSON value and SHA-256 commitment are required." });
