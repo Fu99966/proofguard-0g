@@ -35,9 +35,8 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 const modeLabels = {
-  live: "LIVE 0G CONFIGURED",
-  demo: "DEMO / NO 0G CALLS",
-  unavailable: "0G CONFIG ERROR",
+  "rules-only": "仅规则",
+  "rules-plus-models": "规则加双模型",
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -47,7 +46,7 @@ const money = (value) => `$${Number(value || 0).toLocaleString("en-US", { maximu
 function App() {
   const [data, setData] = useState(null);
   const [selectedId, setSelectedId] = useState("safe-swap");
-  const [reviewMode, setReviewMode] = useState("demo");
+  const [reviewMode, setReviewMode] = useState("rules-only");
   const [phase, setPhase] = useState("idle");
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
@@ -83,7 +82,7 @@ function App() {
   function selectScenario(id) {
     if (phase !== "idle" && phase !== "complete" && phase !== "error") return;
     setSelectedId(id);
-    setReviewMode("demo");
+    setReviewMode("rules-only");
     setResult(null);
     setSignature("");
     setExecution(null);
@@ -98,7 +97,8 @@ function App() {
 
   async function runReview(proposal) {
     const custom = Boolean(proposal?.transaction);
-    setReviewMode(custom ? data.status.agentReviewMode : "demo");
+    const mode = custom ? data.status.agentReviewMode : "rules-only";
+    setReviewMode(mode);
     setResult(null);
     setSignature("");
     setExecution(null);
@@ -110,8 +110,8 @@ function App() {
       appendLog("Transaction intercepted before wallet broadcast");
       await sleep(520);
       appendLog("Untrusted proposal fields isolated for review");
-      setPhase("inference");
-      appendLog(custom ? "Submitting decoded-calldata review" : "Running two simulated reviews locally");
+      setPhase("policy");
+      appendLog(custom ? "Submitting decoded-calldata review" : "Running deterministic rules with local scenario data");
 
       const response = await fetch(custom ? "/api/review" : "/api/demo/review", {
         method: "POST",
@@ -123,9 +123,8 @@ function App() {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Review failed");
 
-      setPhase("policy");
-      appendLog("AI verdict compiled with deterministic owner policy");
-      await sleep(620);
+      setReviewMode(payload.reviewMode);
+      appendLog(`Review completed: ${modeLabels[payload.reviewMode]}`);
       appendLog(
         payload.decision === "ALLOW" ? "Scoped execution permit sealed" : "Execution blocked; no permit emitted",
         payload.decision === "ALLOW" ? "success" : "danger",
@@ -185,7 +184,7 @@ function App() {
   }
 
   async function testTamper() {
-    const modified = `${result.inference.rawDecision} `;
+    const modified = `${result.evidence.responseValue} `;
     try {
       setError("");
       const response = await fetch("/api/verify-commitment", {
@@ -196,7 +195,7 @@ function App() {
       const verification = await response.json();
       if (!response.ok || verification.valid !== false) throw new Error("Unconfirmed mismatch");
       setTamper(verification);
-      appendLog("Tampered model response rejected: commitment mismatch", "danger");
+      appendLog("Tampered review evidence rejected: commitment mismatch", "danger");
     } catch {
       setError("未能确认篡改检测结果。");
     }
@@ -211,7 +210,7 @@ function App() {
     );
   }
 
-  const isRunning = ["intercept", "inference", "policy"].includes(phase);
+  const isRunning = ["intercept", "policy"].includes(phase);
 
   return (
     <div className="app-shell">
@@ -227,8 +226,8 @@ function App() {
           <button className={view === "architecture" ? "active" : ""} onClick={() => setView("architecture")}>架构</button>
         </nav>
         <div className="top-actions">
-          <span className={`network-badge ${data.status.mode}`}>
-            <i /> {modeLabels[data.status.mode]}
+          <span className={`network-badge ${data.status.agentReviewMode === "rules-plus-models" ? (data.status.agentModelsAvailable ? "live" : "unavailable") : "demo"}`}>
+            <i /> {modeLabels[data.status.agentReviewMode]}{data.status.agentReviewMode === "rules-plus-models" && !data.status.agentModelsAvailable ? " · 0G 不可用" : ""}
           </span>
           <button className="wallet-button" onClick={connectWallet}>
             <Wallet size={15} /> {wallet ? shortHash(wallet, 6, 4) : "连接钱包"}
@@ -244,7 +243,7 @@ function App() {
             selectedId={selectedId}
             selectScenario={selectScenario}
             phase={phase}
-            reviewMode={result?.inference.mode || reviewMode}
+            reviewMode={result?.reviewMode || reviewMode}
             result={result}
             error={error}
             logs={logs}
@@ -289,13 +288,14 @@ function CustomReview({ onReview, isRunning }) {
 }
 
 function FirewallView({ data, scenario, selectedId, selectScenario, phase, reviewMode, result, error, logs, runReview, isRunning, signPermit, signature, execution, testTamper, tamper }) {
+  const useModels = reviewMode === "rules-plus-models";
   return (
     <div className="firewall-page">
       <section className="hero">
         <div className="hero-copy">
           <span className="kicker"><CircleDot size={13} /> AUTONOMOUS AGENT SAFETY LAYER</span>
-          <h1>让第二个可信大脑，<br /><em>拦在交易之前。</em></h1>
-          <p>Agent 提交交易提案，经双模型委员会和确定性策略复核。三票全部通过，才签发限时模拟执行许可。</p>
+          <h1>Agent 交易审查</h1>
+          <p>交易先通过 Owner 的确定性规则。启用双模型时，还会核对两份裁决及其 TEE 回执。</p>
         </div>
         <div className="hero-stat">
           <span>DEMO TREASURY</span>
@@ -342,11 +342,11 @@ function FirewallView({ data, scenario, selectedId, selectScenario, phase, revie
         </div>
 
         <div className="review-panel panel">
-          <PanelHeader icon={Cpu} label={reviewMode === "demo" ? "SIMULATED COMMITTEE" : "0G COMMITTEE"} meta={`${data.status.models.length} MODELS / UNANIMOUS`} />
+          <PanelHeader icon={Cpu} label="交易审查" meta={modeLabels[reviewMode]} />
           <div className="pipeline">
-            <PipelineStep number="01" title="Intercept" caption="Isolate proposal" active={phase === "intercept"} done={["inference", "policy", "complete"].includes(phase)} />
-            <PipelineStep number="02" title="0G Committee" caption={reviewMode === "demo" ? "Local simulation" : "Private Router requests"} active={phase === "inference"} done={["policy", "complete"].includes(phase)} />
-            <PipelineStep number="03" title="Policy" caption="Deterministic gate" active={phase === "policy"} done={phase === "complete"} />
+            <PipelineStep number="01" title="Intercept" caption="Isolate proposal" active={phase === "intercept"} done={["policy", "complete"].includes(phase)} />
+            <PipelineStep number="02" title="Policy" caption="Deterministic gate" active={phase === "policy"} done={phase === "complete"} />
+            <PipelineStep number="03" title="0G Committee" caption={useModels ? "Two verdicts and receipts" : "Skipped in rules-only mode"} active={false} done={phase === "complete" && Boolean(result?.inference?.committee?.length)} />
             <PipelineStep number="04" title="Seal" caption="Permit or block" active={phase === "complete"} done={phase === "complete"} />
           </div>
 
@@ -355,7 +355,7 @@ function FirewallView({ data, scenario, selectedId, selectScenario, phase, revie
               <div className="radar-visual"><ScanLine size={40} /><i /><i /><i /></div>
               <span>TRANSACTION HELD AT GATE</span>
               <h2>尚未广播到链上</h2>
-              <p>原始交易将在隔离区内接受对抗式审查。</p>
+              <p>选择本地示例，或提交自定义 Base Sepolia 交易。</p>
             </div>
           )}
           {isRunning && <ScanningState phase={phase} mode={reviewMode} />}
@@ -371,11 +371,11 @@ function FirewallView({ data, scenario, selectedId, selectScenario, phase, revie
               </button>
             )}
             {result?.permit && !result.permit.owner && <span>未指定签名钱包，当前仅审查。</span>}
-            {result?.permit?.owner && !signature && (
+            {result?.permit?.owner && !result.onchainPermit && !signature && (
               <button className="primary-action safe" onClick={signPermit}><KeyRound size={18} />签署并模拟执行</button>
             )}
             {signature && <div className="signed-banner"><Fingerprint size={18} /><span>{execution ? "PERMIT CONSUMED" : "OWNER SIGNED"}<small>{execution ? shortHash(execution.txHash, 14, 10) : shortHash(signature, 14, 10)}</small></span></div>}
-            {result && !tamper && (
+            {result?.evidence.responseValue && !tamper && (
               <button className="tamper-button" onClick={testTamper}><ShieldAlert size={16} />模拟篡改响应</button>
             )}
             {tamper && <div className="tamper-alert"><OctagonX size={18} /><span>COMMITMENT MISMATCH<small>响应与原始承诺不一致</small></span></div>}
@@ -393,7 +393,7 @@ function FirewallView({ data, scenario, selectedId, selectScenario, phase, revie
             <PolicyRule icon={Activity} label="最大滑点" value={`${data.policy.maxSlippageBps / 100}%`} />
             <PolicyRule icon={Hexagon} label="资产白名单" value={Object.values(data.policy.allowedAssets).map(({ symbol }) => symbol).join(" · ")} />
             <PolicyRule icon={Network} label="允许网络" value="Base 演示 · Base Sepolia" />
-            <PolicyRule icon={LockKeyhole} label="推理模式" value={data.status.mode === "demo" ? "DEMO" : "PRIVATE / TeeML"} accent />
+            <PolicyRule icon={LockKeyhole} label="Agent 审查模式" value={modeLabels[data.status.agentReviewMode]} accent />
           </div>
           <div className="policy-hash"><span>POLICY COMMITMENT</span><code>{shortHash(data.policyHash, 16, 10)}</code><Copy size={13} /></div>
           <div className="live-log">
@@ -431,8 +431,7 @@ function PolicyRule({ icon: Icon, label, value, accent }) {
 function ScanningState({ phase, mode }) {
   const copy = {
     intercept: ["INTERCEPTING", "正在隔离提案中的不可信字段"],
-    inference: mode === "demo" ? ["SIMULATED REVIEW", "正在本地运行模拟审查"] : ["PRIVATE REVIEW", "等待 0G Router 返回两份裁决"],
-    policy: ["COMPILING POLICY", "正在将 AI 判断与确定性规则合并"],
+    policy: ["REVIEW IN PROGRESS", mode === "rules-plus-models" ? "正在检查规则和双模型裁决" : "正在检查确定性规则"],
   }[phase];
   return (
     <div className="scanning-state">
@@ -444,21 +443,24 @@ function ScanningState({ phase, mode }) {
 
 function Decision({ result }) {
   const allowed = result.decision === "ALLOW";
+  const committee = result.inference?.committee ?? [];
+  const receipt = result.inference?.receipt;
   return (
     <div className={`decision ${allowed ? "allow" : "block"}`}>
       <div className="decision-icon">{allowed ? <ShieldCheck size={38} /> : <OctagonX size={38} />}</div>
       <span>{allowed ? "EXECUTION PERMIT ISSUED" : "TRANSACTION BLOCKED"}</span>
-      <h2>{allowed ? "三票一致审查通过" : "审查未通过"}</h2>
-      <p>{result.deterministic.passed ? result.inference.summary : `未通过确定性策略：${result.deterministic.checks.filter((check) => !check.passed).map((check) => check.label).join("、")}`}</p>
-      <div className="decision-metrics">
+      <h2>{allowed ? "审查通过" : "审查未通过"}</h2>
+      <p>{result.deterministic.passed ? result.inference?.summary || "交易符合当前 Owner 规则。" : `未通过确定性策略：${result.deterministic.checks.filter((check) => !check.passed).map((check) => check.label).join("、")}`}</p>
+      {committee.length > 0 && <div className="decision-metrics">
         <div><span>RISK</span><strong>{result.inference.riskScore}</strong></div>
-        <div><span>VOTES</span><strong>{result.inference.committee.filter((reviewer) => reviewer.decision === "ALLOW").length}/{result.inference.committee.length}</strong></div>
+        <div><span>VOTES</span><strong>{committee.filter((reviewer) => reviewer.decision === "ALLOW").length}/{committee.length}</strong></div>
         <div><span>LATENCY</span><strong>{result.inference.latencyMs}ms</strong></div>
-      </div>
-      <div className={`receipt-status ${result.inference.receipt.verified ? "verified" : "simulated"}`}>
-        {result.inference.receipt.verified ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
-        {result.inference.receipt.label}
-      </div>
+      </div>}
+      {receipt && <div className={`receipt-status ${receipt.verified ? "verified" : "simulated"}`}>
+        {receipt.verified ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+        {receipt.label}
+      </div>}
+      <div className="receipt-status">{modeLabels[result.permit?.reviewMode ?? result.reviewMode]}</div>
     </div>
   );
 }
@@ -467,8 +469,8 @@ function EvidenceRibbon({ result }) {
   return (
     <section className={`evidence-ribbon ${result.decision.toLowerCase()}`}>
       <div><ShieldCheck size={22} /><span>DECISION</span><strong>{result.decision}</strong></div>
-      <div><span>0G COMMITTEE</span><strong>{result.inference.models.length} MODELS</strong></div>
-      <div><span>TRUST</span><strong>{result.inference.mode === "demo" ? "SIMULATION" : result.inference.trustMode.toUpperCase()}</strong></div>
+      <div><span>审查模式</span><strong>{modeLabels[result.permit?.reviewMode ?? result.reviewMode]}</strong></div>
+      <div><span>交易来源</span><strong>{result.simulation ? "本地示例" : "Base Sepolia 提案"}</strong></div>
       <div><span>TX COMMITMENT</span><code>{shortHash(result.evidence.transactionHash)}</code></div>
       <div><span>PERMIT</span><code>{shortHash(result.permit?.permitHash)}</code></div>
     </section>
@@ -479,27 +481,29 @@ function EvidenceView({ data, result, tamper, onBack }) {
   if (!result) {
     return <EmptyView icon={Fingerprint} title="证据室等待第一份收据" text="先运行一笔交易审查，ProofGuard 会在这里展开完整证据链。" action="返回防火墙" onClick={onBack} />;
   }
+  const receipt = result.inference?.receipt;
+  const committee = result.inference?.committee ?? [];
   return (
     <div className="secondary-page">
-      <section className="page-title"><span>IMMUTABLE EVIDENCE</span><h1>一次决策，三份承诺。</h1><p>交易、策略与模型响应分别哈希；任意一字被修改，即可通过重算与原始承诺对照。</p></section>
+      <section className="page-title"><h1>审查证据</h1><p>重新计算交易、策略和审查结果的哈希，可以和签发时记录的承诺对照。</p></section>
       <div className="evidence-grid">
         <EvidenceCard index="01" icon={Bot} title="Transaction commitment" hash={result.evidence.transactionHash} detail={result.deterministic.facts?.method ?? "Calldata blocked"} />
         <EvidenceCard index="02" icon={LockKeyhole} title="Policy commitment" hash={result.evidence.policyHash} detail={`${data.policy.id} · v${data.policy.version}`} />
-        <EvidenceCard index="03" icon={Cpu} title="Committee commitment" hash={result.evidence.responseCommitment} detail={`${result.inference.models.length} reviewers · ${result.inference.mode === "demo" ? "simulation" : result.inference.trustMode}`} />
+        <EvidenceCard index="03" icon={Cpu} title="Review commitment" hash={result.evidence.responseCommitment} detail={modeLabels[result.reviewMode]} />
       </div>
       <section className="receipt-sheet">
         <div className="receipt-head"><div><Fingerprint size={25} /><span>PROOFGUARD RECEIPT<small>{result.permit?.version || "NO PERMIT"}</small></span></div><strong className={result.decision.toLowerCase()}>{result.decision}</strong></div>
         <ReceiptRow label="Permit hash" value={result.permit?.permitHash || "Not issued"} />
-        <ReceiptRow label="0G response ID" value={result.inference.receipt.responseId || "Not exposed by router"} />
-        <ReceiptRow label="Attestation status" value={result.inference.receipt.label} />
-        <ReceiptRow label="Committee" value={result.inference.committee.map((reviewer) => `${reviewer.role}:${reviewer.model}:${reviewer.decision}`).join(" | ")} />
+        <ReceiptRow label="审查模式" value={modeLabels[result.permit?.reviewMode ?? result.reviewMode]} />
+        {receipt && <ReceiptRow label="Attestation status" value={receipt.label} />}
+        {committee.length > 0 && <ReceiptRow label="Committee" value={committee.map((reviewer) => `${reviewer.role}:${reviewer.model}:${reviewer.decision}`).join(" | ")} />}
         {result.permit && (
           <>
             <ReceiptRow label="Issued / expires" value={`${result.permit.issuedAt}  →  ${result.permit.expiresAt}`} />
             <ReceiptRow label="Scoped target" value={result.permit.scope.target} />
           </>
         )}
-        {result.inference.mode === "live" && result.inference.receipt.responses.map((receipt) => (
+        {receipt?.responses?.map((receipt) => (
           <ReceiptRow key={receipt.role} label={`${receipt.role} Router request`} value={receipt.requestId || "Not exposed by router"} />
         ))}
         {tamper && <div className="receipt-tamper"><OctagonX size={18} /><span>TAMPER TEST FAILED CLOSED</span><code>{shortHash(tamper.actualHash, 18, 12)}</code></div>}
@@ -519,20 +523,20 @@ function ReceiptRow({ label, value }) {
 function ArchitectureView({ data }) {
   return (
     <div className="secondary-page architecture-page">
-      <section className="page-title"><span>ZERO-TRUST PIPELINE</span><h1>任何一个 AI 都没有最终决定权。</h1><p>0G 主审模型理解复杂意图，0G SIA 模型负责红队复核，Owner Policy 执行不可协商的边界；三票一致才允许钱包签名。</p></section>
+      <section className="page-title"><h1>交易审查流程</h1><p>默认由 Owner 规则决定能否签发 Permit。显式开启双模型后，主审和红队都必须放行，且 Router 必须确认两份 TEE 回执。</p></section>
       <section className="architecture-flow">
         <ArchitectureNode icon={Bot} eyebrow="UNTRUSTED" title="Agent Intent" text="EVM transaction + calldata" />
         <FlowArrow label="INTERCEPT" />
-        <ArchitectureNode icon={Cpu} eyebrow="PRIVATE / VERIFIABLE" title="0G Committee" text={data.status.models.join(" + ")} accent />
-        <FlowArrow label="VERDICT" />
         <ArchitectureNode icon={LockKeyhole} eyebrow="DETERMINISTIC" title="Policy Gate" text={`${data.policy.id} · fail closed`} />
+        <FlowArrow label="OPTIONAL" />
+        <ArchitectureNode icon={Cpu} eyebrow="EXPLICIT OPT-IN" title="0G Committee" text="Two verdicts and two TEE receipts" accent />
         <FlowArrow label="SEAL" />
-        <ArchitectureNode icon={Fingerprint} eyebrow="SCOPED" title="Execution Permit" text="hash + expiry + nonce" safe />
+        <ArchitectureNode icon={Fingerprint} eyebrow="SCOPED" title="Execution Permit" text="review mode + hash + expiry + nonce" safe />
       </section>
       <section className="architecture-notes">
-        <article><span>01</span><h3>隐私不是 UI 开关</h3><p>API key 只在服务端，单次请求强制携带 Private trust mode；敏感交易意图不进入公开链。</p></article>
-        <article><span>02</span><h3>任一审查票都能否决</h3><p>主审模型、SIA 红队模型与确定性规则必须三票一致；任一模型输出异常、不可用或 BLOCK 都不会生成 Permit。</p></article>
-        <article><span>03</span><h3>证明与承诺分开展示</h3><p>官方返回的 attestation 原样保存；本地哈希只证明内容未被篡改，不冒充 TEE Proof。</p></article>
+        <article><h3>仅规则</h3><p>本地解码交易并执行配置的规则。未被规则表达的意图和条件需要额外判断。</p></article>
+        <article><h3>规则加双模型</h3><p>请求使用 Private trust mode，API key 留在服务端。任一裁决或回执失败都会阻止签发。</p></article>
+        <article><h3>可核对的证据</h3><p>Permit 哈希绑定审查模式。审查响应的本地承诺可重算，TEE 验签状态来自 Router。</p></article>
       </section>
       <a className="docs-link" href="https://pc.0g.ai/" target="_blank" rel="noreferrer">OPEN 0G PRIVATE COMPUTER <ExternalLink size={15} /></a>
     </div>
