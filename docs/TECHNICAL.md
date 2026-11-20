@@ -6,12 +6,11 @@
 - 参赛赛道：赛道二 — Build with 0G Private Computer
 - Sponsor：0G Labs
 - 产品形态：Web App + Agent transaction firewall API
-- 0G 模型委员会：`glm-5.3-flash` 主审 + `0GM-1.0-35B-A3B-SIA` 红队复核
-- 推理模式：`private` / TeeML
+- 默认使用确定性审查。可选的 0G 审查使用 `glm-5.3-flash` 主审与 `0GM-1.0-35B-A3B-SIA` 红队复核，信任模式为 `private` / TeeML。
 
 ## 2. 项目定义
 
-ProofGuard 审查链上 Agent 提交的 EVM 交易。服务端解码原始 calldata，按独立取得的事实检查 Owner Policy。Base Sepolia 的实链提交由 Safe Guard 校验 Permit。实时模式的许可要求确定性规则与两次 0G 裁决全部放行，并且两次 Router 回执均确认 TEE 签名。
+ProofGuard 审查链上 Agent 提交的 EVM 交易。服务端解码原始 calldata，按独立取得的事实检查 Owner Policy。默认仅规则，全部通过即可签发 Permit，无需 0G 密钥。管理员显式启用双模型后，签发还要求两次 0G 裁决均放行，且 Router 确认两份 TEE 签名。Base Sepolia 的实链提交由 Safe Guard 校验已签名的 Permit。
 
 现有评测中，应当拦截的样本均由确定性规则覆盖，双模型没有产生新增的正确拦截。授权对照按范围只评估规则和 GoPlus 信号。模型对规则覆盖之外案例的增量尚未验证。[评测记录](../specs/002-project-completeness/tasks.md#evaluation-closure-and-limitations)
 
@@ -19,7 +18,7 @@ ProofGuard 审查链上 Agent 提交的 EVM 交易。服务端解码原始 calld
 
 ### 3.1 0G Router
 
-服务端调用 OpenAI 兼容端点：
+显式启用双模型后，服务端调用 OpenAI 兼容端点。
 
 ```text
 POST https://router-api.0g.ai/v1/chat/completions
@@ -59,10 +58,12 @@ sequenceDiagram
     A->>P: Proposed EVM transaction
     P->>D: Decode and check policy with trusted facts
     D-->>P: Deterministic verdict
-    P->>Z: Live path requests two parallel reviews
-    Z-->>P: Two verdicts and Router receipt metadata
-    alt Policy and both live reviews allow
-        P-->>A: Scoped execution permit
+    opt Dual-model mode is enabled
+        P->>Z: Request two parallel reviews
+        Z-->>P: Two verdicts and Router receipt metadata
+    end
+    alt All required checks pass
+        P-->>A: Execution permit with review mode
         A->>E: Original transaction and bound Permit
         E->>E: Verify binding, expiry, signer and nonce
         E-->>A: Execution evidence
@@ -75,7 +76,7 @@ sequenceDiagram
 
 - React 19 + Vite
 - 四个预置攻击场景
-- Intercept → Private Inference → Policy → Seal 状态机
+- 展示规则结果、实际使用的审查模式和 Permit。启用双模型时展示裁决和回执。
 - 防火墙、证据室、架构三个页面
 - EIP-712 钱包签名
 - 篡改响应挑战与 fail-closed 可视化
@@ -93,15 +94,15 @@ sequenceDiagram
 
 ```json
 {
-  "version": "proofguard-permit/2",
+  "version": "proofguard-permit/3",
   "decision": "ALLOW",
+  "reviewMode": "rules-only",
+  "simulation": false,
   "owner": "0x...",
   "transactionHash": "0x...",
   "policyHash": "0x...",
-  "inferenceHash": "0x...",
-  "model": "glm-5.3-flash",
-  "models": ["glm-5.3-flash", "0GM-1.0-35B-A3B-SIA"],
-  "trustMode": "private",
+  "evidenceHash": "0x...",
+  "models": [],
   "issuedAt": "ISO-8601",
   "expiresAt": "ISO-8601",
   "nonce": "random-96-bit",
@@ -115,11 +116,13 @@ sequenceDiagram
 }
 ```
 
+`permitHash` 绑定模式、执行范围和审查证据。SDK 会重算该哈希。Safe Guard 继续核对含 `permitHash` 的 EIP-712 签名，链上 ABI 无需调整。两种模式分别签发 `rules-only` 和 `rules-plus-models`。
+
 ## 5. 关键功能
 
 ### 5.1 语义风险审查
 
-实时主审与红队分别收到 Owner Mandate、解码后的交易效果和标记为不可信的 memo。生产审查提示词省略确定性结论。系统分别记录两份裁决和回执；任一裁决否决或证据不可用时，流程拒发 Permit。可见规则组和盲审组仅用于既有的内部评测。
+可选的主审与红队分别收到 Owner Mandate、解码后的交易效果和标记为不可信的 memo。正式审查提示词省略确定性结论。系统分别记录两份裁决和回执。任一裁决否决或证据缺失时拒发 Permit。可见规则组和盲审组用于既有的内部评测。
 
 ### 5.2 确定性 Owner Policy
 
@@ -129,7 +132,7 @@ sequenceDiagram
 
 - Transaction commitment：绑定实际将要执行的交易
 - Policy commitment：证明 Owner Policy 没有在审查后被替换
-- Inference commitment：证明展示与执行引用的是同一份模型响应
+- Review commitment 绑定确定性规则结果或双模型响应，供签发后核对
 
 ### 5.4 钱包与一次性 Permit
 
@@ -140,8 +143,8 @@ sequenceDiagram
 | 威胁 | 缓解措施 |
 |---|---|
 | Prompt Injection | 确定性模式检测，审查提示将 memo 标为不可信输入 |
-| 模型错误放行 | 确定性规则独立执行，实时许可要求两份有效裁决；现有样本的正确拦截由规则完成 |
-| 模型响应篡改 | inference commitment |
+| 模型错误放行 | 可选双模型模式保留确定性否决权，两份有效放行裁决是附加条件。现有样本的正确拦截由规则完成。 |
+| 审查模式或证据篡改 | 模式和审查证据纳入 Permit 哈希。 |
 | 交易替换 | transaction commitment 与执行时复核 |
 | Permit 重放 | 短有效期 + 随机 nonce + 一次消费 |
 | 未授权访问与请求滥用 | Agent 审查和审计使用 Bearer 密钥并分别按密钥限流。公开模拟接口独立限流，浏览器跨域请求使用精确 Origin 白名单 |
@@ -181,12 +184,12 @@ npm start
 
 ## 9. 当前 Demo 边界
 
-- 无 0G API key 时使用确定性 Demo reviewer，页面明确标记为模拟，不宣称 TEE proof。
-- 执行适配器会真实验证钱包签名和 Permit，但不会广播交易或移动资金。
+- 无 0G API key 时仍可使用默认的仅规则模式。预置场景核对本地固定市场样本，Permit 标记为模拟。
+- 本地模拟执行会验证钱包签名和 Permit，产生本地收据。
 - 浏览器预设使用固定市场样本。经过鉴权的 Base Sepolia 提案使用服务端配置的价格源，根据 calldata 和地址计算效果。
-- Base Sepolia Agent 使用独立签发者签名、Safe Guard 与 RPC 余额模拟。测试网部署和长时间验收的状态以项目完整性规格记录为准。
+- Base Sepolia Agent 使用独立签发者签名、Safe Guard 与 RPC 余额模拟。测试网验收状态见项目完整性规格记录。
 
-这些边界保证演示可重复，同时不对未实现能力作虚假陈述。
+服务默认监听 `127.0.0.1`，保留本地鉴权和限流。Docker 和 Cloud Run 为可选、非推荐用法。公网安全验收不适用，因为项目采用本地安装。
 
 ## 10. 后续迭代计划
 
