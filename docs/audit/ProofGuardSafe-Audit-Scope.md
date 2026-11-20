@@ -1,58 +1,40 @@
 # ProofGuardSafe 第三方合约审计范围
 
-准备日期 2026-11-21。第三方合约审计完成前，运行范围限 Base Sepolia 和测试资金。
+第三方合约审计完成前，运行范围限 Base Sepolia 和测试资金。
 
 ## 冻结版本和待审范围
 
-- 合约、测试及构建配置冻结在本地提交 `d718af16d6af16cb2dd6d327b34eead9dddafd38`，Guard 源码最后一次修改在 `fb1e785c2064423784dd1d8200691409d028028f`。审计交接以冻结包中的 Git 源文件和随附证据为准。
-- 待审合约是 `ProofGuardSafe` 及同文件的 `ISafeModuleExecutor` ABI。合约文件 Git blob 是 `1401bec4032244a33465bbc409664b200a07da3c`，SHA-256 是 `32c9632f4a2a3e1c13ef64ac4f547e800634d0f2b471bb74a97ca1304def0dad`。[合约源码](../../contracts/src/ProofGuardSafe.sol)
-- 复核 Safe v1.5.0 的 owner guard、module guard 及 module 接口如何调用 ProofGuardSafe。把部署与安装配置、签名工具、链 ID、Safe 代理、单例及 factory 校验作为集成证据。独立复审 Safe、Permit2、路由器及代币合约另计范围。[部署脚本](../../scripts/deploy-testnet-safe.js) · [Safe 安装检查](../../sdk/safeSetup.js) · [签名封装](../../sdk/guard.js)
-- 模型、规则引擎、报价源及公网 API 的全面安全评估另计范围。Permit 签发接口、密钥权限和链上信任关系纳入本次审计的边界检查。新版 Permit 把审查模式、模拟标志和证据摘要纳入 `permitHash`，SDK 重算哈希，链上通过 EIP-712 签名校验该哈希。[Permit 承诺](../../sdk/permit.js) · [审查模式验证](../../sdk/review.js)
-- 冻结包从固定提交的白名单路径打包，附 Foundry、LCOV、Slither、字节码复核证据、复现说明和逐文件哈希。ZIP 的 SHA-256 为 `b5c41a1c7fa486d46e99d1b5f2c27c40de82db302dd027253f63d47dafb510b8`。[冻结包](../../var/audit/2026-11-21-release/ProofGuardSafe-d718af1.zip) · [逐文件哈希](../../var/audit/2026-11-21-release/MANIFEST.sha256)
+- 新版候选冻结于 `4aae9a6e535cfe16a7f29bbee0bee0670e7287e1`。本地冻结包包含源码、编译配置、相关 SDK、迁移说明、Foundry、LCOV、Slither 和逐文件校验和。新版仅在本地分叉部署和执行。 [冻结包](../../var/audit/issuer-rotation/ProofGuardSafe-4aae9a6.zip) · [ZIP 校验和](../../var/audit/issuer-rotation/ProofGuardSafe-4aae9a6.zip.sha256)
+- 待审范围包括 `ProofGuardSafe`、`ISafeModuleExecutor`、两套 Safe v1.5.0 Guard 回调，以及签发和迁移边界。旧版源码快照在本地身份整理后的等价提交为 `63e2e11bb89f20f02a36e7baa453dad25aadb9b9`，两者文件树与原旧版冻结快照一致。独立审查 Safe、Permit2、路由器、代币、模型及完整 API 架构另计范围。 [Guard 源码](../../contracts/src/ProofGuardSafe.sol) · [迁移步骤](ProofGuardSafe-Migration.md)
+- 新版 Guard 的 Git 源文件 blob 为 `1c551a8db5216cd1cfa9ec34bc1ae14e9bf0f9a1`，源文件 SHA-256 为 `759bbfac95078e8a40fdb7a67730a4f6df68a775454742a40e190eb1850f362d`。编译设置为 solc 0.8.30、`viaIR`、optimizer 200、`osaka`。 [构建清单](../../var/audit/issuer-rotation/build-manifest.json)
 
-## Guard 的校验逻辑
+## 校验与信任边界
 
 | 路径 | 校验与状态变化 |
 | --- | --- |
-| 部署与安装 | 合约构造函数限制在链 ID 84532 部署，要求 Safe 地址有代码，Safe、Agent、issuer 互异且非零。安装流程核对官方 Safe v1.5.0 部署配置，启用该模块并把同一合约设为 owner guard 和 module guard。 |
-| EIP-712 Permit | 签名域绑定 `ProofGuard`、版本 `1`、链 ID 和本 Guard 地址。结构体绑定 Safe `from`、`to`、`value`、`dataHash`、`deadline`、`nonce` 及 `permitHash`。校验签发者、65 字节签名、低 `s`、`v`、Safe 地址、非零哈希、未到期及未消费 nonce。 |
-| Agent | 仅注册 Agent 调用 `executeGuarded`。直接目标不得为 Safe 或 Guard 自身。Permit 必须匹配目标、原生代币金额和 calldata 哈希。Guard 使用 nonce 后，通过 Safe 模块执行 `CALL` 并核对同一动作的 guard 回调与执行结果。 |
-| Safe owner | `authorizeOwnerTransaction` 可由任意提交者登记有效签名，按 `to`、`value`、calldata 哈希索引。Safe 进入 `checkTransaction` 时仅允许 `CALL`，检查零退款配置、登记的 Permit、当前有效期及 nonce，同时消费 nonce 并删除登记。 |
-| Safe 回调 | 仅固定 Safe 可调用 guard hooks。模块回调还要求 module 为本 Guard 且匹配待执行动作。owner 和 module 的执行后回调遇到失败会 revert。审计需验证真实 Safe 下回调顺序及失败时 nonce、待执行动作和交易状态是否原子回滚。 |
+| 部署与安装 | Guard 限制链 ID 84532，绑定 Safe 和 Agent，验证初始角色地址。Safe 同时安装 transaction guard、module guard 及对应模块。需保持 Agent、issuer 与 Safe Owner 分离。 |
+| 普通 Owner 交易 | Safe 验证 Owner 签名门槛。Guard 检查操作类型、退款参数和准确的 Permit，限制过期与 nonce 重用。 |
+| 模块交易 | 仅绑定的 Agent 可经已安装模块执行。暂停时拒绝提交。核对 Permit、目标、金额、calldata、回调和执行结果。失败回滚 nonce 与消费记录。 |
+| Owner 恢复 | 仅允许 Safe 完成了既有 Owner 签名门槛后，以零金额、精确 calldata 调用 Guard 的恢复入口。Agent 和当前 issuer 的直接调用及以这两个地址提交恢复事务均被拒绝。单笔更换 issuer、递增代次、暂停 Agent，发出包含新旧 issuer 和代次的 `IssuerRecovered`。 |
+| 代次失效与恢复运行 | EIP-712 域在第 0 代保留兼容格式，之后以代次作为 salt。Owner 登记按代次隔离。旧签名和登记不会在代次提升后复活，即使再次选中同一个 signer 地址。Owner 达到门槛后可单独恢复 Agent，普通交易仍检查 Permit。 |
+| 服务端签发 | 服务端与 SDK 使用 `issuerEpoch` 构造签名域，审查模式仍由 `permitHash` 绑定。恢复后应重配签发 key 和代次并重启服务与 Agent。设置滞后的客户端可能产生链上无法使用的 Permit，部署前应验证读回值。 |
 
-## 威胁模型和已知限制
+## 已知限制
 
-| 边界或故障 | 第三方审计重点 |
-| --- | --- |
-| Agent、Safe owner 或外部调用者未持有有效许可 | 检查双 guard 注册和 owner、模块、Safe 管理路径实际受控。验证未经授权的操作、交易字段变更、重放、过期和异常调用被拒绝。 |
-| 两笔相同动作、并发 owner 登记、nonce 争用和执行失败 | 检查同一动作的有效许可可覆盖预登记记录时，是否仍只执行准确授权的动作，评估时效、撤销需求、观察到的链上事件和可用性。验证失败回滚与重试行为。 |
-| issuer 密钥泄露或无法签名 | issuer 是链上最终审批信任根，合约用 `ecrecover`、固化 issuer 地址，当前没有签发端轮换、撤销、独立暂停或 EIP-1271 支持。复核权限隔离、操作恢复和更换 Guard 的路径，特别是恢复操作自身需要 Permit 的依赖。 |
-| calldata、路由器状态、行情源或下游合约状态变化 | 链上校验覆盖已签名的交易动作及其时限。报价真实性、持仓 mandate、模型判决、0G/Router 证明及标的合约行为由签发前的系统和集成假设约束。检查允许范围、升级和部署时的 trust assumptions。 |
-| 时间边界与链上环境变化 | 检查签发与消费阶段的 `block.timestamp` 边界、Permit 短时有效期和排序延迟，明确跨链或未来网络迁移时的构造和安装变更。 |
+- **旧部署迁移仍依赖旧 issuer。** 旧版 `issuer` 为 `immutable`，现有 Safe 的 Guard 与模块配置需要旧 issuer 签发管理 Permit。旧 issuer 已丢失时，没有经验证的独立卸载或迁移路径。历史复跑证实新签名被旧 Guard 判为 `InvalidSignature`，仅 Owner 授权会返回 `MissingPermit`。有权签发与有权提交属于分开的角色。已提交或已执行的交易不会因新版轮换而回滚。 [旧版复跑](../../var/handoff/issuer-recovery/foundry-current-recovery.log)
+- 新版应复核 Safe 签名校验先于事务 Guard、控制入口的 calldata 白名单、Owner 管理交易和模块路径之间的隔离、轮换与并发交易排序、已登记 Permit 的代次隔离，以及暂停和恢复事件的监控。Owner 门槛仍是恢复信任根。
+- 当前规则、报价源和模型证据位于签发前。Guard 校验签名和已签名的动作边界。第三方应分别复核下游标的、价格时效与链上排序。
 
-## Foundry 测试和实际部署
+## 验证证据
 
-从冻结锁文件在独立目录执行 `npm ci`。Foundry 1.7.1 使用已锁定的 solc-js `0.8.30+commit.73712a01`、`viaIR`、optimizer 200 和 `osaka`。编译器的开发依赖 `tmp` 由作用域限定的 override 锁定在 0.2.7，对应修复 CVE-2025-54798、CVE-2026-44705 和 CVE-2026-49982。本次 `npm audit` 报告 0 项发现。 [依赖维护者公告](https://github.com/raszi/node-tmp/security) · [依赖审查证据](../../var/audit/2026-11-21-release/npm-audit.json)
+- **Foundry 29 项通过。** 18 项单元测试、10 项真实 Safe v1.5.0 分叉集成、1 项 invariant。分叉固定 Base Sepolia 区块 `61349084`，哈希 `0x8c3cfe69dc02b1ea8d827a531733049e8c8a01a0c143601960c3537035fd480d`。新增用例验证丢失、泄露后继续签发、Owner 签名未达门槛，以及旧代签名与登记重放。2-of-2 用例确认一个签名不足、两个有效签名可恢复。无有效 Permit 的 invariant 共 3,072 次调用。 [测试日志](../../var/audit/issuer-rotation/fork-tests.log)
+- **Foundry 分支覆盖 24/24（100%）。** 行 76/82（92.68%），语句 135/141（95.74%），函数 15/15（100%）。统计基于 `--ir-minimum`，其源码映射警告保留在日志中。 [覆盖率日志](../../var/audit/issuer-rotation/fork-coverage.log) · [LCOV](../../var/audit/issuer-rotation/coverage.lcov)
+- **迁移演练。** 在本地 Anvil 分叉从旧版部署字节码升级到新版，校验两套新 Guard 与旧模块停用。恢复并获 Owner 允许后，HTTP/API、SDK 和链上 Guard 完成第 1 代 rules-only Permit 的签发与执行。应用测试 116 项通过，构建成功，零 0G 请求。 [迁移 Gas 和链路记录](../../var/audit/issuer-rotation/migration-gas.log)
+- **Slither。** 0.11.6 复跑 102 个检测器，结果为两条 Low impact、Medium confidence 的 `timestamp`，对应 `_verify` 和 `_consume` 的到期判断。JSON 记录分析成功。进程在报告发现项后退出 255。 [Slither 结果](../../var/audit/issuer-rotation/slither.json)
 
-分叉测试全部 24 项通过，含 17 项本地测试、6 项真实 Safe 集成测试及 1 项状态不变量测试。[本地测试](../../contracts/test/ProofGuardSafe.t.sol) · [分叉和不变量](../../contracts/test/fork/ProofGuardSafeFork.t.sol) · [分叉日志](../../var/audit/2026-11-21-release/fork-foundry.log)
-
-- 分叉固定在 Base Sepolia 区块 `61349084`，区块哈希 `0x8c3cfe69dc02b1ea8d827a531733049e8c8a01a0c143601960c3537035fd480d`。测试校验链 ID 84532、区块号、Safe v1.5.0 singleton 和 factory 的 runtime 哈希，并通过链上 factory 在本地分叉创建测试 Safe。测试使用固定测试角色，写入均在本地分叉，链上只读。
-- ERC-165 测试检查两个 Guard 接口可安装，也检查拒绝无效接口 ID。Owner 和 module 路径分别验证真实 Safe 的前后回调、Permit 消费事件和 nonce。被调用方失败后，Safe nonce、Permit nonce 及目标状态回滚，恢复后同一个 Permit 可执行一次。
-- Guard 替换测试验证当前 issuer 的签名是更换的前提。通过有效签名更换两个 guard slot、停用旧模块后，新 issuer 可恢复 owner 和 module 两条路径。原 issuer 签名失效且只有 owner 授权无法更换，issuer 已丢失时无法用这一套部署恢复。
-- 不变量用 128 轮、每轮 24 步测试无有效 Permit 时真实 Safe 的执行路径。3,072 次调用含 1,532 次 owner 和 1,540 次 module，覆盖缺失、过期、签名错误、calldata 不符和已消费 nonce。每次预期的内部 revert 由测试处理器捕获。断言实际调用回滚，Safe nonce 和目标状态不变，过期许可未被消费。
-
-| 合约 | 行 | 语句 | 分支 | 函数 |
-| --- | --- | --- | --- | --- |
-| `ProofGuardSafe.sol` | 59/63，93.65% | 106/110，96.36% | 20/20，100.00% | 13/13，100.00% |
-
-覆盖率统计使用 `--ir-minimum`，达到 80% 分支门槛。数字采用 Foundry 对冻结项目合约的插桩口径，IR 位置映射警告保留在日志。正式字节码复核使用常规 optimizer 200 构建。离线运行可重复 17 项本地测试，分叉验证需要能读取指定区块的 RPC。[覆盖率日志](../../var/audit/2026-11-21-release/fork-coverage.log) · [LCOV](../../var/audit/2026-11-21-release/coverage.lcov) · [离线日志](../../var/audit/2026-11-21-release/offline-foundry.log)
-
-此前实测部署在同一区块的只读核对确认 Safe 版本为 `1.5.0`，交易和模块 guard slot 均指向 `0xF8969fd65bDBb525d66B5e191759fcB59034310C`，该模块已启用。当前冻结源码按部署配置编译的 creation 和 runtime 字节码及 metadata 与部署工件一致。屏蔽编译器声明的 immutable 地址位置后，部署地址的 runtime 与工件完全匹配。[链上 Guard](https://sepolia.basescan.org/address/0xF8969fd65bDBb525d66B5e191759fcB59034310C) · [构建与只读证据](../../var/audit/2026-11-21-release/build-equivalence.json)
-
-在冻结版本的仓库运行以下命令可复现测试。
+在冻结版本中先运行 `npm ci`。分叉与覆盖率复现命令如下。命令只读取公开 RPC，测试写入由 Foundry 在本地模拟。
 
 ```sh
-npm ci
 export FOUNDRY_INVARIANT_RUNS=128 FOUNDRY_INVARIANT_DEPTH=24 FOUNDRY_INVARIANT_FAIL_ON_REVERT=true
 npm run test:contracts -- --fork-url https://sepolia.base.org --fork-block-number 61349084 \
   --fuzz-seed 0x2d63284cb6cf36e8f6257ea26e7ea425fc47aff1fdf962570b58bc65b9ca7ad
@@ -60,17 +42,6 @@ node node_modules/@foundry-rs/forge/bin.mjs coverage --fork-url https://sepolia.
   --fuzz-seed 0x2d63284cb6cf36e8f6257ea26e7ea425fc47aff1fdf962570b58bc65b9ca7ad \
   --ir-minimum --exclude-tests --report summary --report lcov
 ```
-
-## Slither 结果
-
-Slither `0.11.6`、crytic-compile `0.4.2` 和 Foundry 使用 `0.8.30` 分析 2 个合约条目（含接口）、运行 102 个检测器，输出 2 条 `timestamp`，级别为 Low impact、Medium confidence。JSON 记录分析成功，进程在报告发现项后以 255 退出。当前锁文件重新编译后，已核对合约源码 SHA-256 与实际构建字节码一致，沿用此静态分析证据。[Slither 报告](../../var/audit/2026-11-21-release/package-d718af1/evidence/slither.json) · [版本与哈希核对](../../var/audit/2026-11-21-release/source-version.json)
-
-| 发现 | 位置 | 初步核对 |
-| --- | --- | --- |
-| `timestamp` | `_verify` 第 119 行 | 验证签名 Permit 是否仍在有效期，审计复核精确边界和链上排序影响。 |
-| `timestamp` | `_consume` 第 131 行 | 消费时再次判断到期，适用于预先登记、稍后执行的 owner 路径。同样复核 TTL 和执行边界。 |
-
-本次静态分析没有 High 或 Medium impact 结果。两条检测涉及有意保留的到期检查，第三方仍需判断其时效假设和实际风险。[Slither 时间戳检测器](https://github.com/crytic/slither/wiki/Detector-Documentation#block-timestamp)
 
 ## 第三方审计候选
 

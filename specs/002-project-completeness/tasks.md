@@ -20,7 +20,7 @@
 - [x] T011 Verify clean local installation, loopback listener and package exclusions (FR-011).
 - [x] T012 Draft on-demand document review for Owner confirmation (FR-012).
 - [x] T013 Freeze Guard code plus audit tests and archive compiler, fork, coverage and invariant evidence (FR-013).
-- [ ] T014 Verify Owner recovery, old Permit invalidation, migration rehearsal and the new audit freeze (FR-014).
+- [x] T014 Verify Owner recovery, old Permit invalidation, migration rehearsal and the new audit freeze (FR-014).
 
 ## Acceptance recorded 2026-11-18
 
@@ -173,3 +173,7 @@ The application suite passed 115 tests. The tests exercise no-key signing, the r
 The first clean install exposed an advisory in the `tmp` development dependency used by solc. A scoped override pins `tmp` to the patched `0.2.7` under solc, keeping `solc` at `0.8.30`. The final install and npm audit reported zero known vulnerabilities. The package and Git file inventories exclude environment files, keys, and SQLite files. The negative packaging check used 22 dummy paths and retained `.env.example`. [Package verification](../../var/handoff/2026-11-21/package-exclusions.log) · [npm audit result](../../var/handoff/2026-11-21/npm-audit.json)
 
 The audit release freezes the Guard and test suite at `d718af16d6af16cb2dd6d327b34eead9dddafd38`. The production Solidity source matches `e0a03e0`. All 24 tests passed with solc 0.8.30 on the canonical Safe v1.5.0 at the pinned Base Sepolia fork. Foundry reports 20 of 20 branches covered. The invariant asserts a revert and unchanged state on 3,072 attempts without a valid Permit. Guard replacement and recovery require an authorization from the currently configured issuer. The audit package documents the issuer-loss limit and IR mapping warnings. Third-party audit remains a pending release gate. [Audit scope](../../docs/audit/ProofGuardSafe-Audit-Scope.md) · [Verified audit package](../../var/audit/2026-11-21-release/ProofGuardSafe-d718af1.zip)
+
+## Safe Owner issuer recovery
+
+Candidate `4aae9a6e535cfe16a7f29bbee0bee0670e7287e1` adds the exact Owner-quorum recovery and resume calls, signer epochs, and an `IssuerRecovered` event. The new freeze passed 29 Foundry and 116 application tests. The pinned Base Sepolia fork covered all four acceptance scenarios and 24 of 24 Foundry branch counters. An isolated migration rehearsal used 2,217,332 gas across nine local transactions and verified an epoch-one Permit from the API and SDK. The existing deployment still requires the old issuer for migration. Testnet deployment is pending operator approval. Zero Router requests and zero public transactions. [Audit scope](../../docs/audit/ProofGuardSafe-Audit-Scope.md) · [Migration runbook](../../docs/audit/ProofGuardSafe-Migration.md)
