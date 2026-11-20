@@ -4,11 +4,11 @@
 
 ## 冻结版本和待审范围
 
-- 源码冻结在本地提交 `e0a03e0eb311ee692832c5c9e18c2beb8ee88a22`，Guard 源码最后一次修改在 `fb1e785c2064423784dd1d8200691409d028028f`。Guard、Foundry 测试及编译配置与冻结提交一致。审计交接时以冻结包提供这一版本。
+- 合约、测试及构建配置冻结在本地提交 `d718af16d6af16cb2dd6d327b34eead9dddafd38`，Guard 源码最后一次修改在 `fb1e785c2064423784dd1d8200691409d028028f`。审计交接以冻结包中的 Git 源文件和随附证据为准。
 - 待审合约是 `ProofGuardSafe` 及同文件的 `ISafeModuleExecutor` ABI。合约文件 Git blob 是 `1401bec4032244a33465bbc409664b200a07da3c`，SHA-256 是 `32c9632f4a2a3e1c13ef64ac4f547e800634d0f2b471bb74a97ca1304def0dad`。[合约源码](../../contracts/src/ProofGuardSafe.sol)
 - 复核 Safe v1.5.0 的 owner guard、module guard 及 module 接口如何调用 ProofGuardSafe。把部署与安装配置、签名工具、链 ID、Safe 代理、单例及 factory 校验作为集成证据。独立复审 Safe、Permit2、路由器及代币合约另计范围。[部署脚本](../../scripts/deploy-testnet-safe.js) · [Safe 安装检查](../../sdk/safeSetup.js) · [签名封装](../../sdk/guard.js)
-- 模型、规则引擎、报价源及公网 API 的全面安全评估另计范围。Permit 签发接口、密钥权限和链上信任关系纳入本次审计的边界检查。
-- 本地冻结包由 `git archive` 从冻结提交生成，SHA-256 为 `ff0ba55cd5ae82250c163ff1f02898037c4cbbaa956240255d722c1bef851c31`。包内包含合约、测试、编译配置和集成上下文。[冻结包](../../var/audit/2026-11-21/ProofGuardSafe-e0a03e0.zip)
+- 模型、规则引擎、报价源及公网 API 的全面安全评估另计范围。Permit 签发接口、密钥权限和链上信任关系纳入本次审计的边界检查。新版 Permit 把审查模式、模拟标志和证据摘要纳入 `permitHash`，SDK 重算哈希，链上通过 EIP-712 签名校验该哈希。[Permit 承诺](../../sdk/permit.js) · [审查模式验证](../../sdk/review.js)
+- 冻结包从固定提交的白名单路径打包，附 Foundry、LCOV、Slither、字节码复核证据、复现说明和逐文件哈希。ZIP 的 SHA-256 为 `b5c41a1c7fa486d46e99d1b5f2c27c40de82db302dd027253f63d47dafb510b8`。[冻结包](../../var/audit/2026-11-21-release/ProofGuardSafe-d718af1.zip) · [逐文件哈希](../../var/audit/2026-11-21-release/MANIFEST.sha256)
 
 ## Guard 的校验逻辑
 
@@ -32,19 +32,38 @@
 
 ## Foundry 测试和实际部署
 
-- Foundry 1.7.1 使用仓库锁定的 solc-js `0.8.38+commit.1835d247` 完成编译和离线测试。7 通过，0 失败，0 跳过。覆盖 Agent 和 owner 的许可正常路径、nonce 重放、变更 calldata、过期、缺签名、缺许可和非授权提交者。[测试源码](../../contracts/test/ProofGuardSafe.t.sol) · [Foundry 日志](../../var/audit/2026-11-21/foundry-test.log)
+从冻结锁文件在独立目录执行 `npm ci`。Foundry 1.7.1 使用已锁定的 solc-js `0.8.30+commit.73712a01`、`viaIR`、optimizer 200 和 `osaka`。编译器的开发依赖 `tmp` 由作用域限定的 override 锁定在 0.2.7，对应修复 CVE-2025-54798、CVE-2026-44705 和 CVE-2026-49982。本次 `npm audit` 报告 0 项发现。 [依赖维护者公告](https://github.com/raszi/node-tmp/security) · [依赖审查证据](../../var/audit/2026-11-21-release/npm-audit.json)
+
+分叉测试全部 24 项通过，含 17 项本地测试、6 项真实 Safe 集成测试及 1 项状态不变量测试。[本地测试](../../contracts/test/ProofGuardSafe.t.sol) · [分叉和不变量](../../contracts/test/fork/ProofGuardSafeFork.t.sol) · [分叉日志](../../var/audit/2026-11-21-release/fork-foundry.log)
+
+- 分叉固定在 Base Sepolia 区块 `61349084`，区块哈希 `0x8c3cfe69dc02b1ea8d827a531733049e8c8a01a0c143601960c3537035fd480d`。测试校验链 ID 84532、区块号、Safe v1.5.0 singleton 和 factory 的 runtime 哈希，并通过链上 factory 在本地分叉创建测试 Safe。测试使用固定测试角色，写入均在本地分叉，链上只读。
+- ERC-165 测试检查两个 Guard 接口可安装，也检查拒绝无效接口 ID。Owner 和 module 路径分别验证真实 Safe 的前后回调、Permit 消费事件和 nonce。被调用方失败后，Safe nonce、Permit nonce 及目标状态回滚，恢复后同一个 Permit 可执行一次。
+- Guard 替换测试验证当前 issuer 的签名是更换的前提。通过有效签名更换两个 guard slot、停用旧模块后，新 issuer 可恢复 owner 和 module 两条路径。原 issuer 签名失效且只有 owner 授权无法更换，issuer 已丢失时无法用这一套部署恢复。
+- 不变量用 128 轮、每轮 24 步测试无有效 Permit 时真实 Safe 的执行路径。3,072 次调用含 1,532 次 owner 和 1,540 次 module，覆盖缺失、过期、签名错误、calldata 不符和已消费 nonce。每次预期的内部 revert 由测试处理器捕获。断言实际调用回滚，Safe nonce 和目标状态不变，过期许可未被消费。
 
 | 合约 | 行 | 语句 | 分支 | 函数 |
 | --- | --- | --- | --- | --- |
-| `ProofGuardSafe.sol` | 54/63，85.71% | 85/110，77.27% | 5/20，25.00% | 12/13，92.31% |
+| `ProofGuardSafe.sol` | 59/63，93.65% | 106/110，96.36% | 20/20，100.00% | 13/13，100.00% |
 
-覆盖率由 `forge coverage --offline --ir-minimum --exclude-tests --report summary --report lcov` 生成。普通覆盖编译遇到 `stack too deep`。IR 覆盖运行有部分插桩位置映射警告，以上数字按工具输出记录。测试使用 Safe 模拟合约，建议审计先检查真实 Safe 的 ERC-165、两个 hooks、回滚、替换和恢复路径。[覆盖率日志](../../var/audit/2026-11-21/foundry-coverage.log) · [LCOV](../../var/audit/2026-11-21/coverage.lcov)
+覆盖率统计使用 `--ir-minimum`，达到 80% 分支门槛。数字采用 Foundry 对冻结项目合约的插桩口径，IR 位置映射警告保留在日志。正式字节码复核使用常规 optimizer 200 构建。离线运行可重复 17 项本地测试，分叉验证需要能读取指定区块的 RPC。[覆盖率日志](../../var/audit/2026-11-21-release/fork-coverage.log) · [LCOV](../../var/audit/2026-11-21-release/coverage.lcov) · [离线日志](../../var/audit/2026-11-21-release/offline-foundry.log)
 
-Base Sepolia 在区块 `61349084` 的只读核对确认 Safe 版本为 `1.5.0`，交易和模块 guard slot 均指向 `0xF8969fd65bDBb525d66B5e191759fcB59034310C`，该模块已启用。新构建的冻结源码在 solc-js `0.8.30+commit.73712a01`、`viaIR`、optimizer 200、`osaka` 下，creation 和 runtime 的字节码及 metadata 与部署工件一致。部署地址的 runtime 在屏蔽编译器声明的 immutable 地址位置后与该工件完全匹配。`0.8.30` 下 7 个测试也全部通过。当前仓库 `0.8.38` 构建会产生不同字节码，后续部署须记录实际采用的编译器和字节码哈希。[链上 Guard](https://sepolia.basescan.org/address/0xF8969fd65bDBb525d66B5e191759fcB59034310C) · [只读证据](../../var/audit/2026-11-21/base-sepolia-readback.json) · [0.8.30 测试](../../var/audit/2026-11-21/foundry-deployed.log)
+此前实测部署在同一区块的只读核对确认 Safe 版本为 `1.5.0`，交易和模块 guard slot 均指向 `0xF8969fd65bDBb525d66B5e191759fcB59034310C`，该模块已启用。当前冻结源码按部署配置编译的 creation 和 runtime 字节码及 metadata 与部署工件一致。屏蔽编译器声明的 immutable 地址位置后，部署地址的 runtime 与工件完全匹配。[链上 Guard](https://sepolia.basescan.org/address/0xF8969fd65bDBb525d66B5e191759fcB59034310C) · [构建与只读证据](../../var/audit/2026-11-21-release/build-equivalence.json)
+
+在冻结版本的仓库运行以下命令可复现测试。
+
+```sh
+npm ci
+export FOUNDRY_INVARIANT_RUNS=128 FOUNDRY_INVARIANT_DEPTH=24 FOUNDRY_INVARIANT_FAIL_ON_REVERT=true
+npm run test:contracts -- --fork-url https://sepolia.base.org --fork-block-number 61349084 \
+  --fuzz-seed 0x2d63284cb6cf36e8f6257ea26e7ea425fc47aff1fdf962570b58bc65b9ca7ad
+node node_modules/@foundry-rs/forge/bin.mjs coverage --fork-url https://sepolia.base.org --fork-block-number 61349084 \
+  --fuzz-seed 0x2d63284cb6cf36e8f6257ea26e7ea425fc47aff1fdf962570b58bc65b9ca7ad \
+  --ir-minimum --exclude-tests --report summary --report lcov
+```
 
 ## Slither 结果
 
-Slither `0.11.6`、crytic-compile `0.4.2` 和 Foundry 分别使用仓库锁定的 `0.8.38` 和部署所用的 `0.8.30` 编译冻结源码。两轮各分析 2 个合约条目（含接口）、运行 102 个检测器，均输出相同的 2 条 `timestamp`，级别为 Low impact、Medium confidence。JSON 记录分析成功，两次进程在报告发现项后均以 255 退出。[0.8.38 报告](../../var/audit/2026-11-21/slither-verified.json) · [0.8.38 日志](../../var/audit/2026-11-21/slither-verified.log) · [0.8.30 报告](../../var/audit/2026-11-21/slither-deployed.json) · [0.8.30 日志](../../var/audit/2026-11-21/slither-deployed.log)
+Slither `0.11.6`、crytic-compile `0.4.2` 和 Foundry 使用 `0.8.30` 分析 2 个合约条目（含接口）、运行 102 个检测器，输出 2 条 `timestamp`，级别为 Low impact、Medium confidence。JSON 记录分析成功，进程在报告发现项后以 255 退出。当前锁文件重新编译后，已核对合约源码 SHA-256 与实际构建字节码一致，沿用此静态分析证据。[Slither 报告](../../var/audit/2026-11-21-release/package-d718af1/evidence/slither.json) · [版本与哈希核对](../../var/audit/2026-11-21-release/source-version.json)
 
 | 发现 | 位置 | 初步核对 |
 | --- | --- | --- |
