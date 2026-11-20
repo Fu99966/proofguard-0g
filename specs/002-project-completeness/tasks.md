@@ -16,10 +16,10 @@
 - [x] T008 Implement and verify the Safe Guard, restricted role, typed issuer and balance simulation on a local Base Sepolia fork (FR-005).
 - [x] T008A Deploy an isolated public Base Sepolia Safe and check that a transaction missing a valid permit reverts there (FR-005).
 - [ ] T009 Obtain an independent contract audit before any mainnet release (FR-005).
-- [ ] T010 Verify the no-key Permit path, dual-model opt-in and mode commitments (FR-010).
-- [ ] T011 Verify clean local installation, loopback listener and package exclusions (FR-011).
+- [x] T010 Verify the no-key Permit path, dual-model opt-in and mode commitments (FR-010).
+- [x] T011 Verify clean local installation, loopback listener and package exclusions (FR-011).
 - [x] T012 Draft on-demand document review for Owner confirmation (FR-012).
-- [ ] T013 Freeze Guard code plus audit tests and archive compiler, fork, coverage and invariant evidence (FR-013).
+- [x] T013 Freeze Guard code plus audit tests and archive compiler, fork, coverage and invariant evidence (FR-013).
 
 ## Acceptance recorded 2026-11-18
 
@@ -157,8 +157,18 @@ The original 24-hour criteria were replaced by the operator-approved split. Part
 
 HTTP controls were verified locally on 2026-11-21. Authentication and relevant limits apply before body parsing, review and audit have independent quotas, and CORS checks exact configured origins. Public deployment security is not applicable because the operator chose local installation. [HTTP verification](../../.specify/bugs/public-http-controls/fix.md)
 
-The audit handoff pins the unchanged Guard source at `e0a03e0eb311ee692832c5c9e18c2beb8ee88a22`. It includes the audit scope, guard checks, threat model, known limitations, Foundry coverage, Slither results, deployed-bytecode reproduction and three potential providers. No provider was contacted. [Audit handoff](../../docs/audit/ProofGuardSafe-Audit-Scope.md)
+The first audit handoff pinned the unchanged Guard source at `e0a03e0eb311ee692832c5c9e18c2beb8ee88a22`. The updated scope records the current freeze, Guard checks, threat model, Foundry and Slither evidence, deployed-bytecode reproduction, limitations, and three potential providers. No provider was contacted. [Audit handoff](../../docs/audit/ProofGuardSafe-Audit-Scope.md)
 
 The follow-up semantic design records ten cases and their trusted evidence prerequisites. It did not run model requests or transactions. [Semantic case design](../../docs/plans/2026-11-21-semantic-review-cases.md)
 
 The separate document-triggered review design specifies when two models are called, Owner approval, evidence integrity and injection defenses. Implementation awaits operator confirmation. [On-demand document review](../../docs/plans/on-demand-document-review.md)
+
+## Local rules-first release verification
+
+The tested local commit is `d718af16d6af16cb2dd6d327b34eead9dddafd38`. A fresh clone ran the README installation, build and startup command under Node 22.23.5 and npm 10.9.9. A process-local Git URL rewrite pointed the README clone command to the unpushed branch. The listener bound to `127.0.0.1:8787`. The safe swap preset produced a rules-only simulation Permit. The unlimited approval was blocked and a one-byte evidence change failed verification. Chrome confirmed the preset mode and the Permit version in the receipt. With the 0G key still empty, the authenticated API reviewed a 1-USDC Permit2 approval against independently fetched Base Sepolia block `61364725` data. The local test issuer signed the result. No public transaction was broadcast. [Commands and output](../../var/handoff/2026-11-21/clean-install.log) · [Browser checks](../../var/handoff/2026-11-21/browser-qa.log)
+
+The application suite passed 115 tests. The tests exercise no-key signing, the rules-only default with a key present, blocked mode changes after signing, and refusal on reviewer veto, missing or duplicate receipts and invalid review data. Chrome also displayed the opt-in label and evidence after two mocked Router receipts. The separate Anvil integration exercised both modes through a real Base Sepolia Safe v1.5.0 fork with local-only writes and mocked dual-model receipts. There were zero live 0G requests. [Application test output](../../var/handoff/2026-11-21/application-tests.log) · [Browser checks](../../var/handoff/2026-11-21/browser-qa.log)
+
+The first clean install exposed an advisory in the `tmp` development dependency used by solc. A scoped override pins `tmp` to the patched `0.2.7` under solc, keeping `solc` at `0.8.30`. The final install and npm audit reported zero known vulnerabilities. The package and Git file inventories exclude environment files, keys, and SQLite files. The negative packaging check used 22 dummy paths and retained `.env.example`. [Package verification](../../var/handoff/2026-11-21/package-exclusions.log) · [npm audit result](../../var/handoff/2026-11-21/npm-audit.json)
+
+The audit release freezes the Guard and test suite at `d718af16d6af16cb2dd6d327b34eead9dddafd38`. The production Solidity source matches `e0a03e0`. All 24 tests passed with solc 0.8.30 on the canonical Safe v1.5.0 at the pinned Base Sepolia fork. Foundry reports 20 of 20 branches covered. The invariant asserts a revert and unchanged state on 3,072 attempts without a valid Permit. Guard replacement and recovery require an authorization from the currently configured issuer. The audit package documents the issuer-loss limit and IR mapping warnings. Third-party audit remains a pending release gate. [Audit scope](../../docs/audit/ProofGuardSafe-Audit-Scope.md) · [Verified audit package](../../var/audit/2026-11-21-release/ProofGuardSafe-d718af1.zip)
