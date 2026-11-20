@@ -1,4 +1,4 @@
-import { keccak256, verifyTypedData } from "ethers";
+import { keccak256, toBeHex, verifyTypedData, zeroPadValue } from "ethers";
 import { stableHash } from "./commitment.js";
 import { isReviewMode } from "./review.js";
 
@@ -32,10 +32,15 @@ export function assertPermitCommitment(permit, tx) {
   }
 }
 
-export function permitTypedData(permit, tx, verifyingContract) {
+export function permitTypedData(permit, tx, verifyingContract, issuerEpoch = "0") {
   if (permit.version !== undefined || permit.transactionHash !== undefined || permit.reviewMode !== undefined) assertPermitCommitment(permit, tx);
   const domain = { name: "ProofGuard", version: "1", chainId: tx.chainId };
   if (verifyingContract) domain.verifyingContract = verifyingContract;
+  if (typeof issuerEpoch !== "string" || !/^(0|[1-9]\d{0,77})$/.test(issuerEpoch)) throw new Error("Invalid Permit issuer epoch.");
+  if (issuerEpoch !== "0") {
+    if (!verifyingContract) throw new Error("An issuer epoch requires a Safe Guard address.");
+    domain.salt = zeroPadValue(toBeHex(BigInt(issuerEpoch)), 32);
+  }
   return {
     domain, types: permitTypes,
     message: { from: tx.from.toLowerCase(), to: tx.to.toLowerCase(), value: BigInt(tx.value).toString(),

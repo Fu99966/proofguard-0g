@@ -7,6 +7,7 @@ interface ForkVm {
     function addr(uint256 privateKey) external returns (address);
     function sign(uint256 privateKey, bytes32 digest) external returns (uint8, bytes32, bytes32);
     function expectRevert(bytes4 selector) external;
+    function expectRevert(bytes calldata data) external;
     function expectEmit(bool, bool, bool, bool, address emitter) external;
     function prank(address sender) external;
     function warp(uint256 timestamp) external;
@@ -25,6 +26,9 @@ interface SafeV150 {
     function VERSION() external view returns (string memory);
     function getThreshold() external view returns (uint256);
     function nonce() external view returns (uint256);
+    function addOwnerWithThreshold(address owner, uint256 threshold) external;
+    function getTransactionHash(address to, uint256 value, bytes calldata data, uint8 operation, uint256 safeTxGas,
+        uint256 baseGas, uint256 gasPrice, address gasToken, address refundReceiver, uint256 nonce) external view returns (bytes32);
     function isModuleEnabled(address module) external view returns (bool);
     function setGuard(address guard) external;
     function setModuleGuard(address guard) external;
@@ -66,6 +70,7 @@ abstract contract ForkSafeFixture {
     ProofGuardSafe internal guard;
 
     event PermitConsumed(bytes32 indexed permitHash, bytes12 indexed nonce, address indexed target);
+    event IssuerRecovered(address indexed previousIssuer, address indexed newIssuer, uint256 indexed epoch);
 
     function setUp() public virtual {
         if (block.chainid == 31337) vm.skip(true);
@@ -126,6 +131,95 @@ abstract contract ForkSafeFixture {
 }
 
 contract ProofGuardSafeForkTest is ForkSafeFixture {
+    function _recover(address newIssuer) private {
+        require(_owner(address(guard), abi.encodeCall(ProofGuardSafe.recoverIssuer, (newIssuer)), 0), "recovery failed");
+    }
+
+    function testForkLostIssuerOwnerRecoversInOneTransaction() external {
+        address previous = guard.issuer();
+        address replacement = vm.addr(REPLACEMENT_ISSUER_KEY);
+        uint256 startNonce = safe.nonce();
+        vm.expectEmit(true, true, true, true, address(guard));
+        emit IssuerRecovered(previous, replacement, 1);
+        _recover(replacement);
+        require(safe.nonce() == startNonce + 1 && guard.issuer() == replacement && guard.issuerEpoch() == 1
+            && guard.agentPaused(), "non-atomic recovery");
+        _assertGuards(guard);
+    }
+
+    function testForkCompromisedIssuerCannotRecoverOrKeepSigning() external {
+        address oldIssuer = guard.issuer();
+        address replacement = vm.addr(REPLACEMENT_ISSUER_KEY);
+        vm.expectRevert(ProofGuardSafe.Unauthorized.selector);
+        vm.prank(AGENT);
+        guard.recoverIssuer(replacement);
+        vm.expectRevert(ProofGuardSafe.Unauthorized.selector);
+        vm.prank(oldIssuer);
+        guard.recoverIssuer(replacement);
+
+        bytes memory data = abi.encodeCall(ForkRecorder.record, (44));
+        ProofGuardSafe.Permit memory permit = _permit(address(recorder), data, 61, block.timestamp + 300);
+        guard.authorizeOwnerTransaction(permit, _sign(guard, permit, ISSUER_KEY));
+        _recover(replacement);
+        bytes memory leakedSignature = _sign(guard, permit, ISSUER_KEY);
+        vm.expectRevert(ProofGuardSafe.InvalidSignature.selector);
+        vm.prank(oldIssuer);
+        guard.authorizeOwnerTransaction(permit, leakedSignature);
+        vm.expectRevert(ProofGuardSafe.MissingPermit.selector);
+        _owner(address(recorder), data, 0);
+
+        bytes memory replacementSignature = _sign(guard, permit, REPLACEMENT_ISSUER_KEY);
+        vm.expectRevert(ProofGuardSafe.AgentPaused.selector);
+        vm.prank(AGENT);
+        guard.executeGuarded(address(recorder), 0, data, permit, replacementSignature);
+        require(recorder.calls() == 0 && !guard.used(permit.nonce), "paused transaction changed state");
+    }
+
+    function testForkRecoveryRequiresSafeOwnerThreshold() external {
+        uint256 secondKey = 0x103;
+        address second = vm.addr(secondKey);
+        _ownerManagement(guard, ISSUER_KEY, abi.encodeCall(SafeV150.addOwnerWithThreshold, (second, 2)), 62);
+        address replacement = vm.addr(REPLACEMENT_ISSUER_KEY);
+        bytes memory message = abi.encodeCall(ProofGuardSafe.recoverIssuer, (replacement));
+        uint256 startNonce = safe.nonce();
+        vm.expectRevert(abi.encodeWithSignature("Error(string)", "GS020"));
+        _owner(address(guard), message, 0);
+        require(guard.issuerEpoch() == 0 && !guard.agentPaused() && safe.nonce() == startNonce, "sub-threshold recovery");
+
+        bytes32 digest = safe.getTransactionHash(address(guard), 0, message, 0, 0, 0, 0, address(0), address(0), startNonce);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(secondKey, digest);
+        bytes memory a = abi.encodePacked(bytes32(uint256(uint160(OWNER))), bytes32(0), uint8(1));
+        bytes memory b = abi.encodePacked(r, s, v);
+        bytes memory signatures = OWNER < second ? bytes.concat(a, b) : bytes.concat(b, a);
+        vm.prank(OWNER);
+        require(safe.execTransaction(address(guard), 0, message, 0, 0, 0, 0, address(0), address(0), signatures), "quorum recovery");
+        require(guard.issuer() == replacement && guard.issuerEpoch() == 1 && guard.agentPaused(), "quorum failed");
+    }
+
+    function testForkOldPermitsNeverReviveAfterRecovery() external {
+        address initialIssuer = guard.issuer();
+        bytes memory data = abi.encodeCall(ForkRecorder.record, (45));
+        ProofGuardSafe.Permit memory permit = _permit(address(recorder), data, 63, block.timestamp + 300);
+        bytes memory oldSignature = _sign(guard, permit, ISSUER_KEY);
+        guard.authorizeOwnerTransaction(permit, oldSignature);
+        _recover(vm.addr(REPLACEMENT_ISSUER_KEY));
+        // Even rotating back to the same address cannot revalidate an older signature or registration.
+        _recover(initialIssuer);
+        require(_owner(address(guard), abi.encodeCall(ProofGuardSafe.resumeAgent, ()), 0), "resume failed");
+        require(!guard.agentPaused() && guard.issuerEpoch() == 2, "wrong resumed state");
+        vm.expectRevert(ProofGuardSafe.MissingPermit.selector);
+        _owner(address(recorder), data, 0);
+        vm.expectRevert(ProofGuardSafe.InvalidSignature.selector);
+        guard.authorizeOwnerTransaction(permit, oldSignature);
+        vm.expectRevert(ProofGuardSafe.InvalidSignature.selector);
+        vm.prank(AGENT);
+        guard.executeGuarded(address(recorder), 0, data, permit, oldSignature);
+        bytes memory freshSignature = _sign(guard, permit, ISSUER_KEY);
+        vm.prank(AGENT);
+        guard.executeGuarded(address(recorder), 0, data, permit, freshSignature);
+        require(recorder.calls() == 1 && guard.used(permit.nonce), "new epoch failed");
+    }
+
     function testForkRealSafeAcceptsERC165AndBothGuardInterfaces() external view {
         require(guard.supportsInterface(0x01ffc9a7), "missing ERC165");
         require(guard.supportsInterface(0xe6d7a83a), "missing transaction guard interface");

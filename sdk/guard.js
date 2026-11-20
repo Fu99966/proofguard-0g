@@ -4,9 +4,14 @@ export const guardAbi = [
   "function safe() view returns(address)",
   "function agent() view returns(address)",
   "function issuer() view returns(address)",
+  "function issuerEpoch() view returns(uint256)",
+  "function agentPaused() view returns(bool)",
+  "function recoverIssuer(address newIssuer)",
+  "function resumeAgent()",
   "function used(bytes12 nonce) view returns(bool)",
   "function executeGuarded(address to,uint256 value,bytes data,(address from,address to,uint256 value,bytes32 dataHash,uint256 deadline,bytes12 nonce,bytes32 permitHash) permit,bytes signature)",
   "event PermitConsumed(bytes32 indexed permitHash,bytes12 indexed nonce,address indexed target)",
+  "event IssuerRecovered(address indexed previousIssuer,address indexed newIssuer,uint256 indexed epoch)",
 ];
 
 export async function guardedSafeSigner(address, signer, safeAddress) {

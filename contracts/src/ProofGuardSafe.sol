@@ -18,6 +18,7 @@ contract ProofGuardSafe {
     }
 
     bytes32 private constant DOMAIN_TYPE = keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+    bytes32 private constant RECOVERY_DOMAIN_TYPE = keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)");
     bytes32 private constant PERMIT_TYPE = keccak256("Permit(address from,address to,uint256 value,bytes32 dataHash,uint256 deadline,bytes12 nonce,bytes32 permitHash)");
     uint256 private constant HALF_CURVE_ORDER = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
 
@@ -29,15 +30,20 @@ contract ProofGuardSafe {
     error TransactionMismatch();
     error InvalidSignature();
     error ExecutionFailed();
+    error AgentPaused();
 
     address public immutable safe;
     address public immutable agent;
-    address public immutable issuer;
+    address public issuer;
+    uint256 public issuerEpoch;
+    bool public agentPaused;
     mapping(bytes12 => bool) public used;
     mapping(bytes32 => Permit) private ownerPermits;
     bytes32 private pendingModuleHash;
 
     event PermitConsumed(bytes32 indexed permitHash, bytes12 indexed nonce, address indexed target);
+    event IssuerRecovered(address indexed previousIssuer, address indexed newIssuer, uint256 indexed epoch);
+    event AgentResumed(uint256 indexed epoch);
 
     constructor(address safeAddress, address agentAddress, address issuerAddress) {
         if (block.chainid != 84532) revert UnsupportedExecution();
@@ -53,10 +59,30 @@ contract ProofGuardSafe {
     }
 
     function permitDigest(Permit memory permit) public view returns (bytes32) {
-        bytes32 domain = keccak256(abi.encode(DOMAIN_TYPE, keccak256("ProofGuard"), keccak256("1"), block.chainid, address(this)));
+        uint256 epoch = issuerEpoch;
+        bytes32 domain = epoch == 0
+            ? keccak256(abi.encode(DOMAIN_TYPE, keccak256("ProofGuard"), keccak256("1"), block.chainid, address(this)))
+            : keccak256(abi.encode(RECOVERY_DOMAIN_TYPE, keccak256("ProofGuard"), keccak256("1"), block.chainid, address(this), bytes32(epoch)));
         bytes32 message = keccak256(abi.encode(PERMIT_TYPE, permit.from, permit.to, permit.value, permit.dataHash,
             permit.deadline, permit.nonce, permit.permitHash));
         return keccak256(abi.encodePacked(hex"1901", domain, message));
+    }
+
+    function recoverIssuer(address newIssuer) external {
+        _requireSafe();
+        address previousIssuer = issuer;
+        if (newIssuer == address(0) || newIssuer == previousIssuer || newIssuer == safe || newIssuer == agent
+            || newIssuer == address(this)) revert Unauthorized();
+        issuer = newIssuer;
+        uint256 epoch = ++issuerEpoch;
+        agentPaused = true;
+        emit IssuerRecovered(previousIssuer, newIssuer, epoch);
+    }
+
+    function resumeAgent() external {
+        _requireSafe();
+        agentPaused = false;
+        emit AgentResumed(issuerEpoch);
     }
 
     function authorizeOwnerTransaction(Permit calldata permit, bytes calldata signature) external {
@@ -66,6 +92,7 @@ contract ProofGuardSafe {
 
     function executeGuarded(address to, uint256 value, bytes calldata data, Permit calldata permit, bytes calldata signature) external {
         if (msg.sender != agent) revert Unauthorized();
+        if (agentPaused) revert AgentPaused();
         if (to == safe || to == address(this) || pendingModuleHash != bytes32(0)) revert UnsupportedExecution();
         if (permit.to != to || permit.value != value || permit.dataHash != keccak256(data)) revert TransactionMismatch();
         _verify(permit, signature);
@@ -77,9 +104,14 @@ contract ProofGuardSafe {
     }
 
     function checkTransaction(address to, uint256 value, bytes calldata data, uint8 operation, uint256, uint256,
-        uint256 gasPrice, address gasToken, address payable refundReceiver, bytes calldata, address) external {
+        uint256 gasPrice, address gasToken, address payable refundReceiver, bytes calldata, address executor) external {
         _requireSafe();
         if (operation != 0 || gasPrice != 0 || gasToken != address(0) || refundReceiver != address(0)) revert UnsupportedExecution();
+        if (to == address(this) && value == 0 && ((data.length == 36 && bytes4(data) == this.recoverIssuer.selector)
+            || (data.length == 4 && bytes4(data) == this.resumeAgent.selector))) {
+            if (executor == agent || executor == issuer) revert Unauthorized();
+            return;
+        }
         bytes32 action = _actionHash(to, value, keccak256(data));
         Permit memory permit = ownerPermits[action];
         if (permit.permitHash == bytes32(0)) revert MissingPermit();
@@ -110,8 +142,8 @@ contract ProofGuardSafe {
         if (msg.sender != safe) revert Unauthorized();
     }
 
-    function _actionHash(address to, uint256 value, bytes32 dataHash) private pure returns (bytes32) {
-        return keccak256(abi.encode(to, value, dataHash));
+    function _actionHash(address to, uint256 value, bytes32 dataHash) private view returns (bytes32) {
+        return keccak256(abi.encode(issuerEpoch, to, value, dataHash));
     }
 
     function _verify(Permit memory permit, bytes calldata signature) private view {

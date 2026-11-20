@@ -30,6 +30,7 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
   keyHashes = (process.env.PROOFGUARD_API_KEY_HASHES || "").split(",").map((hash) => hash.trim()).filter(Boolean),
   frontendOrigins = (process.env.PROOFGUARD_FRONTEND_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean),
   issuerKey = process.env.PROOFGUARD_TESTNET_ISSUER_KEY, guardAddress = process.env.PROOFGUARD_TESTNET_GUARD_ADDRESS,
+  issuerEpoch = process.env.PROOFGUARD_TESTNET_ISSUER_EPOCH?.trim() || "0",
   routerBudgetLimit = process.env.PROOFGUARD_ROUTER_REQUEST_LIMIT, routerBudgetId = process.env.PROOFGUARD_ROUTER_BUDGET_ID,
   reviewMode = process.env.PROOFGUARD_REVIEW_MODE?.trim() || RULES_ONLY,
   rateOptions, shortAcceptance, liveAcceptance, database = process.env.PROOFGUARD_DATABASE_PATH || "var/proofguard.sqlite" } = {}) {
@@ -183,8 +184,9 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
       const evidence = { transactionHash, policyHash, responseCommitment: stableHash(responseValue) };
       let onchainPermit;
       if (permit && issuer && !simulation) {
-        const { domain, types, message } = permitTypedData(permit, transaction, verifyingContract);
-        onchainPermit = { verifyingContract, issuer: issuer.address, signature: await issuer.signTypedData(domain, types, message) };
+        const { domain, types, message } = permitTypedData(permit, transaction, verifyingContract, issuerEpoch);
+        onchainPermit = { verifyingContract, issuer: issuer.address, issuerEpoch,
+          signature: await issuer.signTypedData(domain, types, message) };
       }
       const response = { decision: permit ? "ALLOW" : "BLOCK", ...reviewContext, transaction, deterministic, inference,
         permit, evidence: { ...evidence, responseValue }, onchainPermit };
@@ -198,7 +200,7 @@ export function createApp({ owner = process.env.PROOFGUARD_OWNER_ADDRESS, now = 
             threats: threats.slice(0, 3).map((threat) => threat.slice(0, 160)),
           }),
         })),
-        permit, onchainPermit: onchainPermit ? { verifyingContract, issuer: issuer.address } : null,
+        permit, onchainPermit: onchainPermit ? { verifyingContract, issuer: issuer.address, issuerEpoch } : null,
       }, permit, now());
       if (isShort) {
         if (verified && (shortStep < 2 ? Boolean(onchainPermit) : !permit)) shortStep++;

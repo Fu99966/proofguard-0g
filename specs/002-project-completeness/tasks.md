@@ -20,6 +20,7 @@
 - [x] T011 Verify clean local installation, loopback listener and package exclusions (FR-011).
 - [x] T012 Draft on-demand document review for Owner confirmation (FR-012).
 - [x] T013 Freeze Guard code plus audit tests and archive compiler, fork, coverage and invariant evidence (FR-013).
+- [ ] T014 Verify Owner recovery, old Permit invalidation, migration rehearsal and the new audit freeze (FR-014).
 
 ## Acceptance recorded 2026-11-18
 

@@ -64,7 +64,7 @@ export function createProofGuardClient({ apiUrl, apiKey, now = Date.now }) {
       || returned.value !== snapshot.value || returned.chainId !== snapshot.chainId
       || !Number.isFinite(expires) || expires <= now()) throw new Error("ProofGuard returned an invalid transaction binding.");
     const signerProof = result.onchainPermit;
-    const typedData = permitTypedData(permit, snapshot, verifyingContract ?? signerProof?.verifyingContract);
+    const typedData = permitTypedData(permit, snapshot, verifyingContract ?? signerProof?.verifyingContract, signerProof?.issuerEpoch);
     if (current) {
       if (!signerProof || !typedData.domain.verifyingContract
         || getAddress(signerProof.verifyingContract) !== getAddress(typedData.domain.verifyingContract)

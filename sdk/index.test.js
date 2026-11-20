@@ -80,6 +80,19 @@ it("rejects an expired permit and a proof for a different Safe Guard", async () 
   expect(send).not.toHaveBeenCalled();
 });
 
+it("verifies a recovery-epoch signature and rejects a changed epoch", async () => {
+  const issuerEpoch = "1";
+  const recovered = permitTypedData(permit, transaction, guard, issuerEpoch);
+  const proof = { ...allowed.onchainPermit, issuerEpoch,
+    signature: await issuer.signTypedData(recovered.domain, recovered.types, recovered.message) };
+  vi.stubGlobal("fetch", async () => Response.json({ ...allowed, onchainPermit: proof }));
+  await expect(client.guardedSend(transaction, () => "new epoch")).resolves.toBe("new epoch");
+  proof.issuerEpoch = "2";
+  const send = vi.fn();
+  await expect(client.guardedSend(transaction, send)).rejects.toThrow("Permit signature");
+  expect(send).not.toHaveBeenCalled();
+});
+
 it("verifies a legitimate legacy permit without admitting invented mode metadata", async () => {
   const { reviewMode: _mode, simulation: _simulation, evidenceHash: _evidence, ...legacyPayload } = metadata;
   Object.assign(legacyPayload, { version: "proofguard-permit/2", inferenceHash: stableHash("legacy-verdict"),

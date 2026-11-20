@@ -155,6 +155,36 @@ contract ProofGuardSafeTest {
         guard.executeGuarded(address(guard), 0, data, signed, "");
     }
 
+    function testRecoveryChecksRolesAndExactControlCall() external {
+        address freshIssuer = vm.addr(7);
+        address oldIssuer = guard.issuer();
+        bytes memory recovery = abi.encodeCall(ProofGuardSafe.recoverIssuer, (freshIssuer));
+        address[5] memory invalid = [address(0), oldIssuer, address(safe), AGENT, address(guard)];
+        for (uint256 i; i < invalid.length; ++i) {
+            vm.expectRevert(ProofGuardSafe.Unauthorized.selector);
+            vm.prank(address(safe));
+            guard.recoverIssuer(invalid[i]);
+        }
+        vm.expectRevert(ProofGuardSafe.Unauthorized.selector);
+        vm.prank(AGENT);
+        safe.ownerExecute(address(guard), recovery);
+        vm.expectRevert(ProofGuardSafe.Unauthorized.selector);
+        vm.prank(oldIssuer);
+        safe.ownerExecute(address(guard), recovery);
+        vm.expectRevert(ProofGuardSafe.MissingPermit.selector);
+        safe.ownerExecute(address(guard), bytes.concat(recovery, hex"00"));
+        vm.expectRevert(ProofGuardSafe.MissingPermit.selector);
+        safe.ownerExecute(address(guard), abi.encodeWithSignature("issuer()"));
+        vm.expectRevert(ProofGuardSafe.MissingPermit.selector);
+        vm.prank(address(safe));
+        guard.checkTransaction(address(guard), 1, recovery, 0, 0, 0, 0, address(0), payable(address(0)), "", address(this));
+        vm.expectRevert(ProofGuardSafe.Unauthorized.selector);
+        vm.prank(AGENT);
+        guard.resumeAgent();
+        safe.ownerExecute(address(guard), recovery);
+        require(guard.issuer() == freshIssuer && guard.agentPaused());
+    }
+
     function testModuleFailureOrMissingCallbackRevertsAndRestoresNonce() external {
         ProofGuardSafe.Permit memory signed = permit(2000);
         bytes memory signature = sign(signed);
