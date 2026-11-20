@@ -1,3 +1,4 @@
+# Optional, non-recommended container build. The recommended installation uses npm locally.
 FROM node:22-bookworm-slim AS build
 
 WORKDIR /app
