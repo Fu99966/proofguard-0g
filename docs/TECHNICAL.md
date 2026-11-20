@@ -11,9 +11,9 @@
 
 ## 2. 项目定义
 
-ProofGuard 是面向链上自主 Agent 的交易防火墙。Agent 产生交易后不能直接调用钱包，而是先把交易意图、calldata 摘要和 Owner Policy 交给 ProofGuard。系统通过两个 0G Private Computer 自研模型分别完成语义主审与红队复核，再由确定性策略引擎检查硬边界。只有三票全部为 `ALLOW`，系统才签发短时、限域、一次性的 Execution Permit。
+ProofGuard 审查链上 Agent 提交的 EVM 交易。服务端解码原始 calldata，按独立取得的事实检查 Owner Policy。Base Sepolia 的实链提交由 Safe Guard 校验 Permit。实时模式的许可要求确定性规则与两次 0G 裁决全部放行，并且两次 Router 回执均确认 TEE 签名。
 
-它解决的不是“让 AI 更会交易”，而是“如何让 AI 在拥有交易能力后仍然可控、私密、可追责”。
+现有评测中，应当拦截的样本均由确定性规则覆盖，双模型没有产生新增的正确拦截。授权对照按范围只评估规则和 GoPlus 信号。模型对规则覆盖之外案例的增量尚未验证。[评测记录](../specs/002-project-completeness/tasks.md#evaluation-closure-and-limitations)
 
 ## 3. Sponsor 技术接入
 
@@ -29,9 +29,9 @@ X-0G-Provider-Trust-Mode: private
 
 默认主审为 `glm-5.3-flash`，默认红队复核为 `0GM-1.0-35B-A3B-SIA`。两次请求并行发出，请求携带 `verify_tee: true`，适配器校验模型、结束原因与裁决字段。任一请求失败、未完成、格式异常或 Router 未确认 TEE 签名，均不会发放许可。API key 不进入浏览器。
 
-### 3.2 为什么必须使用 Private Computer
+### 3.2 Private/TeeML 与回执
 
-审查输入可能包含 DAO 仓位、交易规模、目标合约、策略 memo 和尚未广播的 calldata。如果发送给普通中心化 API，防火墙本身会成为 Alpha 与交易意图的泄露点。Private/TeeML 模式让输入在 TEE 中处理，同时为模型和执行环境提供可验证来源。
+审查材料可能包括仓位、交易规模、目标合约和未广播的交易内容。实时集成配置为 Private/TeeML，记录 Router 报告的 TEE 验签结果。该回执用于核验推理来源。
 
 ### 3.3 证据处理
 
@@ -54,23 +54,19 @@ sequenceDiagram
     participant P as ProofGuard API
     participant D as Deterministic Gate
     participant Z as 0G Private Computer
-    participant W as Owner Wallet
-    participant E as Execution Adapter
+    participant E as Safe Guard or Local Simulator
 
     A->>P: Proposed EVM transaction
-    par Independent review
-        P->>D: Chain, target, value, slippage, approval
-        P->>Z: Parallel semantic + red-team review
-        Z-->>P: Two structured verdicts + receipt metadata
-    end
-    D-->>P: Hard-rule result
-    alt Both 0G models and policy allow
+    P->>D: Decode and check policy with trusted facts
+    D-->>P: Deterministic verdict
+    P->>Z: Live path requests two parallel reviews
+    Z-->>P: Two verdicts and Router receipt metadata
+    alt Policy and both live reviews allow
         P-->>A: Scoped execution permit
-        A->>W: Request owner signature
-        W->>E: Permit signature
-        E->>E: Verify hash, expiry, signer, nonce
-        E-->>A: Simulated execution receipt
-    else Either blocks
+        A->>E: Original transaction and bound Permit
+        E->>E: Verify binding, expiry, signer and nonce
+        E-->>A: Execution evidence
+    else Rule, reviewer or evidence failure
         P-->>A: BLOCK, no permit
     end
 ```
@@ -89,8 +85,8 @@ sequenceDiagram
 - Express 5
 - 0G Router adapter
 - 确定性策略引擎
-- Permit compiler 与内存 nonce registry
-- `ethers.verifyMessage` 钱包签名恢复
+- Permit 编译与 SQLite 审计、nonce 消费记录
+- EIP-712 签名验证
 - 静态生产构建托管
 
 ### 4.3 Permit 数据结构
@@ -114,7 +110,7 @@ sequenceDiagram
     "target": "0x...",
     "value": "0",
     "method": "execute(bytes,bytes[],uint256)",
-    "chainId": 8453
+    "chainId": 84532
   }
 }
 ```
@@ -123,21 +119,11 @@ sequenceDiagram
 
 ### 5.1 语义风险审查
 
-0G 主审模型判断交易是否存在上下文欺骗、模糊意图、恶意 memo、非预期资产流向和策略冲突；SIA 红队模型独立寻找隐藏风险及主审可能忽略的否决理由。交易字段被明确标记为 untrusted data，两个模型都不得执行字段内的指令。
+实时主审与红队分别收到 Owner Mandate、解码后的交易效果和标记为不可信的 memo。生产审查提示词省略确定性结论。系统分别记录两份裁决和回执；任一裁决否决或证据不可用时，流程拒发 Permit。可见规则组和盲审组仅用于既有的内部评测。
 
 ### 5.2 确定性 Owner Policy
 
-当前规则包括：
-
-1. Chain ID 白名单
-2. 目标合约白名单
-3. 单笔美元价值上限
-4. 最大滑点
-5. 资产白名单
-6. ERC-20 授权额度上限
-7. Prompt Injection 模式检测
-
-任何失败都会阻断 Permit；即使两个模型都输出 `ALLOW`，确定性规则仍拥有独立否决权。
+当前规则核对链、Agent 钱包、合约与资产白名单、收款地址、额度与授权、报价偏差与滑点、calldata 编码、已知注入模式，以及 Base Sepolia 的仓位纠偏 mandate。任何规则失败都会阻断 Permit，规则可独立否决。
 
 ### 5.3 三重 Commitment
 
@@ -153,12 +139,13 @@ sequenceDiagram
 
 | 威胁 | 缓解措施 |
 |---|---|
-| Prompt Injection | 交易字段隔离、模型对抗提示、确定性模式检测 |
-| 单模型错误放行 | 第二 0G 模型独立红队复核 + 确定性策略门 |
+| Prompt Injection | 确定性模式检测，审查提示将 memo 标为不可信输入 |
+| 模型错误放行 | 确定性规则独立执行，实时许可要求两份有效裁决；现有样本的正确拦截由规则完成 |
 | 模型响应篡改 | inference commitment |
 | 交易替换 | transaction commitment 与执行时复核 |
 | Permit 重放 | 短有效期 + 随机 nonce + 一次消费 |
-| API key 泄露 | 仅服务端环境变量持有 |
+| 未授权访问与请求滥用 | Agent 审查和审计使用 Bearer 密钥并分别按密钥限流。公开模拟接口独立限流，浏览器跨域请求使用精确 Origin 白名单 |
+| API key 泄露 | 0G 密钥留在服务端，Agent 密钥仅保存哈希 |
 | 假冒 0G proof | 收据类型严格区分，不构造 Proof ID |
 | 模型不可用或格式错误 | fail closed，不生成 Permit |
 
@@ -166,7 +153,7 @@ sequenceDiagram
 
 - 0G 单次请求超时为 90 秒。输出预算为 4,096 token，覆盖推理和最终 JSON；截断、超时或非 2xx 均不签发许可。
 - 模型必须返回可解析 JSON；自然语言或缺字段响应不得变成 `ALLOW`。
-- `decision` 除精确 `ALLOW` 外一律归一化为 `BLOCK`。
+- 模型裁决必须为 `ALLOW` 或 `BLOCK`，未知值会触发拒发。
 - risk score 与 confidence 必须是范围内的有限数值。
 - `/api/execute` 对未知、已用、过期、篡改或签名不匹配 Permit 返回 422。
 
@@ -179,7 +166,7 @@ sequenceDiagram
 - Prompt Injection 阻断
 - 无限授权阻断
 - 异常滑点阻断
-- 三票一致 Permit 规则与单票否决
+- 确定性规则独立否决、实时双裁决准入和缺失回执拒发
 - 对象稳定哈希
 - 0G thinking tag 与 Markdown JSON 解析
 - 非 JSON 模型响应失败关闭
@@ -210,11 +197,11 @@ npm start
 - PostgreSQL nonce registry 与审计日志
 - 登录、限流和多租户策略管理
 
-### Phase 2：委员会增强
+### Phase 2：语义审查评估
 
-- 当前已实现 0GM 主审 + 0GM-SIA 红队复核
-- 增加模型分歧可视化与风险升级
-- 以成本、延迟、历史准确率动态路由
+- 设计当前结构化规则没有覆盖的语义案例
+- 评估新增正确拦截、误杀、成本、延迟和同错率
+- 根据届时证据决定保留方式与权限
 
 ### Phase 3：链上可验证执行
 
