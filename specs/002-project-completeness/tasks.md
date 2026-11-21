@@ -177,3 +177,5 @@ The audit release freezes the Guard and test suite at `d718af16d6af16cb2dd6d327b
 ## Safe Owner issuer recovery
 
 Candidate `4aae9a6e535cfe16a7f29bbee0bee0670e7287e1` adds the exact Owner-quorum recovery and resume calls, signer epochs, and an `IssuerRecovered` event. The new freeze passed 29 Foundry and 116 application tests. The pinned Base Sepolia fork covered all four acceptance scenarios and 24 of 24 Foundry branch counters. An isolated migration rehearsal used 2,217,332 gas across nine local transactions and verified an epoch-one Permit from the API and SDK. The existing deployment still requires the old issuer for migration. Testnet deployment is pending operator approval. Zero Router requests and zero public transactions. [Audit scope](../../docs/audit/ProofGuardSafe-Audit-Scope.md) · [Migration runbook](../../docs/audit/ProofGuardSafe-Migration.md)
+
+远端 `readme-verification` 分支为历史分支，已被 `rules-first-release` 取代。
