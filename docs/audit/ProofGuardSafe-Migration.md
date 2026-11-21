@@ -6,6 +6,8 @@
 
 核对网络为 Base Sepolia（84532）、Safe 版本为 1.5.0、两套 Guard 指向预期旧地址、已启用模块列表、Owner 签名门槛和下一笔 Safe nonce。确认 Owner、Agent 和 issuer 各自的地址及职责，确保 Agent 和 issuer 都不在 Owner 列表。暂停 Agent 进程并清空待提交提案。部署前重新编译并与审计包核对字节码，使用新生成的测试网 issuer。
 
+**角色检查必须在任何部署或配置交易前通过。** 在同一个 Base Sepolia 区块读取 Safe 的 `getOwners()`、`getThreshold()` 和现有 Guard 的 `agent()`、`issuer()`。按地址比较完整 Owner 列表，同时核对计划启用的 Agent 和新 issuer。任一角色地址出现在 Owner 列表，或读取失败、链上角色与计划不一致时，停止操作并纠正配置。Owner 列表变更及 issuer 轮换前后都须重跑此检查。
+
 旧版 Guard 的事务检查仍要求原 issuer 签署替换交易的 Permit。如果原 issuer 已丢失，当前部署没有已验证的独立卸载或迁移路径。如果原 issuer 已泄露，暂停本地进程无法撤回旧签名，应先停止自动提交并重新评估现有 Safe 的风险，避免把本清单当作无原 issuer 的应急方案。
 
 ## 顺序和检查

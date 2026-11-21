@@ -21,6 +21,7 @@
 
 ## 已知限制
 
+- **角色隔离依赖 Safe 配置。** Guard 检查地址有效性并阻止 Agent 或当前 issuer 直接提交恢复，但构造、恢复及执行路径均不读取 Safe Owner 列表。Safe 按其 Owner 列表与阈值计算签名权限。若 Agent 或 issuer 兼任 Owner，其签名仍属 Owner 权限，提交者地址检查无法替代角色隔离。部署前必须读取完整 Owner 列表并确认两个角色均不在其中，之后每次更换 Owner、Agent 或 issuer 都须重查。 [部署前角色检查](ProofGuardSafe-Migration.md#前置条件)
 - **旧部署迁移仍依赖旧 issuer。** 旧版 `issuer` 为 `immutable`，现有 Safe 的 Guard 与模块配置需要旧 issuer 签发管理 Permit。旧 issuer 已丢失时，没有经验证的独立卸载或迁移路径。历史复跑证实新签名被旧 Guard 判为 `InvalidSignature`，仅 Owner 授权会返回 `MissingPermit`。有权签发与有权提交属于分开的角色。已提交或已执行的交易不会因新版轮换而回滚。 [旧版复跑](../../var/handoff/issuer-recovery/foundry-current-recovery.log)
 - 新版应复核 Safe 签名校验先于事务 Guard、控制入口的 calldata 白名单、Owner 管理交易和模块路径之间的隔离、轮换与并发交易排序、已登记 Permit 的代次隔离，以及暂停和恢复事件的监控。Owner 门槛仍是恢复信任根。
 - 当前规则、报价源和模型证据位于签发前。Guard 校验签名和已签名的动作边界。第三方应分别复核下游标的、价格时效与链上排序。
